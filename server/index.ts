@@ -169,6 +169,28 @@ async function freshShops(platform: 'tiktok' | 'shopee', brand: string): Promise
   return freshTokens(resolveShops(platform, brand))
 }
 
+/**
+ * Fetch per shop, tolerating per-shop failures: a shop that throws (bad/missing
+ * credentials, dead token, API error) contributes an EMPTY result and is logged,
+ * instead of rejecting the whole batch. This keeps one misconfigured live shop from
+ * breaking the entire brand/dashboard — the working shops still render.
+ */
+async function fetchPerShop<T>(
+  shops: ShopRow[],
+  fn: (s: ShopRow) => Promise<T[]>,
+): Promise<T[][]> {
+  return Promise.all(
+    shops.map((s) =>
+      fn(s).catch((err) => {
+        console.warn(
+          `[shop ${s.id} "${s.name}" ${s.platform}] bỏ qua do lỗi: ${(err as Error).message}`,
+        )
+        return [] as T[]
+      }),
+    ),
+  )
+}
+
 /** Build TikTok API for Business (Ads) creds from a shop — no HMAC, header token. */
 function bizCredsFromShop(shop: ShopRow): TikTokBizCreds {
   const c = shop.credentials
@@ -223,7 +245,7 @@ async function campaignsForShop(
 /** TikTok Ads campaigns across a brand's shops, merged. */
 async function campaigns(start: string, end: string, brand: string): Promise<BizCampaign[]> {
   const shops = await freshShops('tiktok', brand)
-  const per = await Promise.all(shops.map((s) => campaignsForShop(s, start, end, brand)))
+  const per = await fetchPerShop(shops, (s) => campaignsForShop(s, start, end, brand))
   return mergeCampaigns(per)
 }
 
@@ -260,7 +282,7 @@ async function dailySeriesForShop(
 /** Daily series across a brand's TikTok shops, merged day-by-day. */
 async function dailySeries(start: string, end: string, brand: string): Promise<DailyRow[]> {
   const shops = await freshShops('tiktok', brand)
-  const per = await Promise.all(shops.map((s) => dailySeriesForShop(s, start, end)))
+  const per = await fetchPerShop(shops, (s) => dailySeriesForShop(s, start, end))
   return mergeDailyRows(per)
 }
 
@@ -326,7 +348,7 @@ async function shopeeCampaignsForShop(
 /** Shopee CPC ad campaigns across a brand's shops, merged. */
 async function shopeeCampaigns(start: string, end: string, brand: string): Promise<ShopeeCampaign[]> {
   const shops = await freshShops('shopee', brand)
-  const per = await Promise.all(shops.map((s) => shopeeCampaignsForShop(s, start, end, brand)))
+  const per = await fetchPerShop(shops, (s) => shopeeCampaignsForShop(s, start, end, brand))
   return mergeCampaigns(per)
 }
 
@@ -363,7 +385,7 @@ async function shopeeDailySeriesForShop(
 /** Shopee daily series across a brand's shops, merged day-by-day. */
 async function shopeeDailySeries(start: string, end: string, brand: string): Promise<ShopeeDailyRow[]> {
   const shops = await freshShops('shopee', brand)
-  const per = await Promise.all(shops.map((s) => shopeeDailySeriesForShop(s, start, end)))
+  const per = await fetchPerShop(shops, (s) => shopeeDailySeriesForShop(s, start, end))
   return mergeDailyRows(per)
 }
 
@@ -386,7 +408,7 @@ async function tiktokCreatorsForShop(
 /** TikTok affiliate creators across a brand's shops, merged. */
 async function tiktokCreators(start: string, end: string, brand: string): Promise<Creator[]> {
   const shops = await freshShops('tiktok', brand)
-  const per = await Promise.all(shops.map((s) => tiktokCreatorsForShop(s, start, end, brand)))
+  const per = await fetchPerShop(shops, (s) => tiktokCreatorsForShop(s, start, end, brand))
   return mergeCreators(per)
 }
 
@@ -415,7 +437,7 @@ async function tiktokTopProducts(
   brand: string,
 ): Promise<TiktokProductPerf[]> {
   const shops = await freshShops('tiktok', brand)
-  const per = await Promise.all(shops.map((s) => tiktokTopProductsForShop(s, start, end, brand)))
+  const per = await fetchPerShop(shops, (s) => tiktokTopProductsForShop(s, start, end, brand))
   return mergeTopProducts(per)
 }
 
@@ -445,7 +467,7 @@ async function tiktokReconOrdersForShop(
 /** TikTok recon orders across a brand's shops, merged. */
 async function tiktokReconOrders(brand: string): Promise<TiktokReconOrder[]> {
   const shops = await freshShops('tiktok', brand)
-  const per = await Promise.all(shops.map((s) => tiktokReconOrdersForShop(s, brand)))
+  const per = await fetchPerShop(shops, (s) => tiktokReconOrdersForShop(s, brand))
   return mergeRecon(per)
 }
 
@@ -487,7 +509,7 @@ async function shopeeTopProducts(
   brand: string,
 ): Promise<ShopeeProductPerf[]> {
   const shops = await freshShops('shopee', brand)
-  const per = await Promise.all(shops.map((s) => shopeeTopProductsForShop(s, start, end, brand)))
+  const per = await fetchPerShop(shops, (s) => shopeeTopProductsForShop(s, start, end, brand))
   return mergeTopProducts(per)
 }
 
@@ -504,7 +526,7 @@ async function shopeeReconOrdersForShop(
 /** Shopee recon orders across a brand's shops, merged (most recent first). */
 async function shopeeReconOrders(brand: string): Promise<ShopeeReconOrder[]> {
   const shops = await freshShops('shopee', brand)
-  const per = await Promise.all(shops.map((s) => shopeeReconOrdersForShop(s, brand)))
+  const per = await fetchPerShop(shops, (s) => shopeeReconOrdersForShop(s, brand))
   return mergeRecon(per, 60)
 }
 
