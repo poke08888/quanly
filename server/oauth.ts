@@ -53,13 +53,24 @@ export async function exchangeTikTokCode(
   const json = (await res.json()) as {
     code?: number
     message?: string
-    data?: { access_token?: string; access_token_expire_in?: number; refresh_token?: string }
+    data?: {
+      access_token?: string
+      access_token_expire_in?: number
+      refresh_token?: string
+      granted_scopes?: string[]
+      seller_name?: string
+    }
   }
   if (!res.ok || (json.code != null && json.code !== 0)) {
     throw new Error(`TikTok token exchange code ${json.code}: ${json.message ?? res.status}`)
   }
   const d = json.data ?? {}
   if (!d.access_token) throw new Error('TikTok token exchange: no access_token in response')
+  // Diagnostic: log which scopes the seller actually granted (never the tokens).
+  console.log(
+    `[oauth] token exchanged for seller="${d.seller_name ?? '?'}" granted_scopes=` +
+      JSON.stringify(d.granted_scopes ?? 'không trả về'),
+  )
   return {
     accessToken: d.access_token,
     refreshToken: d.refresh_token,
