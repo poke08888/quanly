@@ -107,16 +107,19 @@ export async function fetchFinanceStatements(
   start: string,
   end: string,
 ): Promise<FinanceEnvelope> {
-  // Paginate until next_page_token is empty. Param names best-effort.
+  // statement_time_ge/lt are UNIX SECONDS (int), not date strings. Use local-day
+  // boundaries in Asia/Ho_Chi_Minh (UTC+7) to match the shop's calendar.
+  const geSec = Math.floor(Date.parse(start + 'T00:00:00Z') / 1000) - 7 * 3600
+  const ltSec = Math.floor(Date.parse(end + 'T00:00:00Z') / 1000) - 7 * 3600
+  // Paginate until next_page_token is empty.
   const all: FinanceStatement[] = []
   let pageToken: string | undefined
   let guard = 0
   let last: FinanceEnvelope | undefined
   do {
     const page = await getSigned<FinanceEnvelope>(creds, FINANCE_PATH, {
-      // TODO confirm param names: statement time window + page size.
-      statement_time_ge: start,
-      statement_time_lt: end,
+      statement_time_ge: geSec,
+      statement_time_lt: ltSec,
       page_size: 50,
       page_token: pageToken,
       sort_field: 'statement_time',
