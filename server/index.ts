@@ -77,6 +77,10 @@ import {
   mergeTopProducts,
 } from './shops'
 import { freshTokens, withFreshToken, exchangeTikTokCode } from './oauth'
+import { memo } from './cache'
+
+/** Cache TTL for live per-shop fetches (dedupes the dashboard's parallel calls). */
+const SHOP_TTL = 120_000
 
 import { normalizeCampaigns, normalizeDailySpend } from './tiktokbiz/normalize'
 import {
@@ -259,8 +263,18 @@ async function campaigns(start: string, end: string, brand: string): Promise<Biz
   return mergeCampaigns(per)
 }
 
-/** Daily series for ONE shop (sample fixtures or live API), same normalizer. */
+/** Daily series for ONE shop (sample fixtures or live API), same normalizer. Cached. */
 async function dailySeriesForShop(
+  shop: ShopRow,
+  start: string,
+  end: string,
+): Promise<DailyRow[]> {
+  return memo(`daily:${shop.id}:${shop.mode}:${start}:${end}`, SHOP_TTL, () =>
+    dailySeriesForShopRaw(shop, start, end),
+  )
+}
+
+async function dailySeriesForShopRaw(
   shop: ShopRow,
   start: string,
   end: string,

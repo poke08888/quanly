@@ -42,6 +42,7 @@ export async function fetchAuthorizedShops(
   const res = await fetch(url, {
     method: 'GET',
     headers: { 'x-tts-access-token': accessToken, 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(20_000),
   })
   const json = (await res.json()) as {
     code?: number
@@ -76,6 +77,9 @@ async function getSigned<T>(
       'x-tts-access-token': creds.accessToken,
       'Content-Type': 'application/json',
     },
+    // Cap a slow/hung TikTok call so it fails fast (empty via resilience) instead of
+    // stacking past nginx's proxy timeout and 504-ing the whole dashboard.
+    signal: AbortSignal.timeout(20_000),
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')

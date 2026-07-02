@@ -26,6 +26,7 @@ async function getSigned<T>(
   const res = await fetch(buildUrl(creds.baseUrl, path, query), {
     method: 'GET',
     headers: { 'x-tts-access-token': creds.accessToken, 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(20_000),
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
