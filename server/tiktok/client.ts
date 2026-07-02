@@ -3,6 +3,7 @@
 // SAME normalize.ts used by sample mode. Only reached when TIKTOK_MODE=live.
 
 import { signedQuery } from './sign'
+import { limit } from '../limiter'
 import type { AnalyticsEnvelope, FinanceEnvelope, FinanceStatement } from './types'
 
 export interface TikTokCreds {
@@ -71,25 +72,27 @@ async function getSigned<T>(
     ...params,
   })
   const url = buildUrl(creds.baseUrl, path, query)
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'x-tts-access-token': creds.accessToken,
-      'Content-Type': 'application/json',
-    },
-    // Cap a slow/hung TikTok call so it fails fast (empty via resilience) instead of
-    // stacking past nginx's proxy timeout and 504-ing the whole dashboard.
-    signal: AbortSignal.timeout(20_000),
+  return limit(async () => {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'x-tts-access-token': creds.accessToken,
+        'Content-Type': 'application/json',
+      },
+      // Cap a slow/hung TikTok call so it fails fast (empty via resilience) instead of
+      // stacking past nginx's proxy timeout and 504-ing the whole dashboard.
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`TikTok ${path} HTTP ${res.status}: ${text.slice(0, 300)}`)
+    }
+    const json = (await res.json()) as T & { code?: number; message?: string }
+    if (json.code != null && json.code !== 0) {
+      throw new Error(`TikTok ${path} code ${json.code}: ${json.message}`)
+    }
+    return json
   })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`TikTok ${path} HTTP ${res.status}: ${text.slice(0, 300)}`)
-  }
-  const json = (await res.json()) as T & { code?: number; message?: string }
-  if (json.code != null && json.code !== 0) {
-    throw new Error(`TikTok ${path} code ${json.code}: ${json.message}`)
-  }
-  return json
 }
 
 export async function fetchAnalytics(

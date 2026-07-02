@@ -3,6 +3,7 @@
 // names/paths are best-effort (// TODO confirm). Only reached when TIKTOK_MODE=live.
 
 import { signedQuery } from './sign'
+import { limit } from '../limiter'
 import type { TikTokCreds } from './client'
 import type { OrderSearchEnvelope, SearchedOrder, ShopProduct, ShopProductsEnvelope } from './types'
 
@@ -23,20 +24,22 @@ async function getSigned<T>(
     shop_cipher: creds.shopCipher,
     ...params,
   })
-  const res = await fetch(buildUrl(creds.baseUrl, path, query), {
-    method: 'GET',
-    headers: { 'x-tts-access-token': creds.accessToken, 'Content-Type': 'application/json' },
-    signal: AbortSignal.timeout(20_000),
+  return limit(async () => {
+    const res = await fetch(buildUrl(creds.baseUrl, path, query), {
+      method: 'GET',
+      headers: { 'x-tts-access-token': creds.accessToken, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`TikTok ${path} HTTP ${res.status}: ${text.slice(0, 300)}`)
+    }
+    const json = (await res.json()) as T & { code?: number; message?: string }
+    if (json.code != null && json.code !== 0) {
+      throw new Error(`TikTok ${path} code ${json.code}: ${json.message}`)
+    }
+    return json
   })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`TikTok ${path} HTTP ${res.status}: ${text.slice(0, 300)}`)
-  }
-  const json = (await res.json()) as T & { code?: number; message?: string }
-  if (json.code != null && json.code !== 0) {
-    throw new Error(`TikTok ${path} code ${json.code}: ${json.message}`)
-  }
-  return json
 }
 
 export async function fetchShopProducts(
@@ -66,20 +69,23 @@ async function postSigned<T>(
     { app_key: creds.appKey, shop_cipher: creds.shopCipher, ...params },
     body,
   )
-  const res = await fetch(buildUrl(creds.baseUrl, path, query), {
-    method: 'POST',
-    headers: { 'x-tts-access-token': creds.accessToken, 'Content-Type': 'application/json' },
-    body,
+  return limit(async () => {
+    const res = await fetch(buildUrl(creds.baseUrl, path, query), {
+      method: 'POST',
+      headers: { 'x-tts-access-token': creds.accessToken, 'Content-Type': 'application/json' },
+      body,
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`TikTok ${path} HTTP ${res.status}: ${text.slice(0, 300)}`)
+    }
+    const json = (await res.json()) as T & { code?: number; message?: string }
+    if (json.code != null && json.code !== 0) {
+      throw new Error(`TikTok ${path} code ${json.code}: ${json.message}`)
+    }
+    return json
   })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`TikTok ${path} HTTP ${res.status}: ${text.slice(0, 300)}`)
-  }
-  const json = (await res.json()) as T & { code?: number; message?: string }
-  if (json.code != null && json.code !== 0) {
-    throw new Error(`TikTok ${path} code ${json.code}: ${json.message}`)
-  }
-  return json
 }
 
 export async function fetchOrderSearch(
