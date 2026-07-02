@@ -271,9 +271,18 @@ async function dailySeriesForShop(
     // end is inclusive from the client's perspective; TikTok windows are often
     // [ge, lt), so pass end+1 day as the exclusive bound.
     const endExclusive = addDays(end, 1)
+    const liveCreds = credsFromShop(shop)
+    // Analytics is REQUIRED (revenue/GMV). Finance is OPTIONAL: if the app lacks the
+    // Finance scope (or it errors), show revenue with fees=0 rather than failing the
+    // whole series — so the dashboard works as soon as Analytics is granted.
     ;[analytics, finance] = await Promise.all([
-      fetchAnalytics(credsFromShop(shop), start, endExclusive),
-      fetchFinanceStatements(credsFromShop(shop), start, endExclusive),
+      fetchAnalytics(liveCreds, start, endExclusive),
+      fetchFinanceStatements(liveCreds, start, endExclusive).catch((err) => {
+        console.warn(
+          `[shop ${shop.id} "${shop.name}" finance] bỏ qua phí (thiếu quyền Finance?): ${(err as Error).message}`,
+        )
+        return { code: 0, message: 'skipped', data: { statements: [] } } as FinanceEnvelope
+      }),
     ])
   } else {
     analytics = loadFixture<AnalyticsEnvelope>('analytics_shop_performance.json')
