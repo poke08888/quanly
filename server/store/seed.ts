@@ -115,3 +115,35 @@ export const SEED_KPI_YEAR = 2026
 export const SEED_KPI_MONTHS: number[] = Array.from({ length: 12 }, () => 3_000_000_000)
 /** Brands that get their own per-month KPI targets. */
 export const SEED_KPI_BRANDS: string[] = ['nonelab', 'lumiere', 'herbario']
+
+// ---- Brands + Shops (multi-brand / multi-shop; credentials stored per shop) ----
+export type ShopPlatform = 'tiktok' | 'shopee'
+export type ShopMode = 'sample' | 'live'
+
+export interface SeedBrand {
+  key: string
+  name: string
+}
+
+// Seed brands mirror the KPI/mock brands so the header dropdown is unchanged on
+// first run. Users add their own brands via the admin screen afterwards.
+export const SEED_BRANDS: SeedBrand[] = [
+  { key: 'nonelab', name: 'Nonelab' },
+  { key: 'lumiere', name: 'Lumière' },
+  { key: 'herbario', name: 'Herbario' },
+]
+
+export interface SeedShop {
+  brandKey: string
+  platform: ShopPlatform
+  name: string
+  mode: ShopMode
+}
+
+// Seed ONE sample shop per platform under 'nonelab' only, so `api` mode renders out
+// of the box WITHOUT multiplying the sample fixtures across every brand (brand=group
+// sums all shops). Other brands start empty — users attach their real shops.
+export const SEED_SHOPS: SeedShop[] = [
+  { brandKey: 'nonelab', platform: 'tiktok', name: 'Nonelab TikTok (demo)', mode: 'sample' },
+  { brandKey: 'nonelab', platform: 'shopee', name: 'Nonelab Shopee (demo)', mode: 'sample' },
+]

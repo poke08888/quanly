@@ -9,6 +9,7 @@ import { ReconM6 } from './screens/ReconM6'
 import { OrdersM7 } from './screens/OrdersM7'
 import { UsersM8 } from './screens/UsersM8'
 import { KpiM9 } from './screens/KpiM9'
+import { BrandsM10 } from './screens/BrandsM10'
 
 export function App() {
   const s = useDashboard()
@@ -40,6 +41,7 @@ export function App() {
               {s.screen === 'm7' && <OrdersM7 s={s} />}
               {s.screen === 'm8' && <UsersM8 s={s} />}
               {s.screen === 'm9' && <KpiM9 s={s} />}
+              {s.screen === 'm10' && <BrandsM10 s={s} />}
             </>
           )}
         </div>

@@ -111,6 +111,24 @@ async function fetchEscrow(creds: ShopeeCreds, sns: string[]): Promise<Map<strin
   return map
 }
 
+/**
+ * Lightweight connection probe: a single signed get_order_list call. Validates
+ * partner_id/partner_key/access_token/shop_id without pulling details/escrow.
+ * Throws (with Shopee's message) on bad credentials; resolves otherwise.
+ */
+export async function pingOrders(
+  creds: ShopeeCreds,
+  timeFrom: number,
+  timeTo: number,
+): Promise<void> {
+  await get<OrderListResponse>(creds, ORDER_LIST_PATH, {
+    time_range_field: 'create_time',
+    time_from: String(timeFrom),
+    time_to: String(timeTo),
+    page_size: '1',
+  })
+}
+
 /** Full live pull: order_sns -> details + escrow. timeFrom/timeTo are unix seconds. */
 export async function fetchOrdersAndEscrow(
   creds: ShopeeCreds,

@@ -1,10 +1,10 @@
 export type Role = 'ceo' | 'bm' | 'ops'
-export type ScreenId = 'm1' | 'm3' | 'm4' | 'm5' | 'm6' | 'm7' | 'm8' | 'm9'
+export type ScreenId = 'm1' | 'm3' | 'm4' | 'm5' | 'm6' | 'm7' | 'm8' | 'm9' | 'm10'
 
-// Screen gating per role (ROLE_NAV in the prototype). M8 (user management) is
-// CEO-only; M9 (KPI targets) is BM + CEO (not Ops).
+// Screen gating per role (ROLE_NAV in the prototype). M8 (user management) and
+// M10 (brands & shops config) are CEO-only; M9 (KPI targets) is BM + CEO (not Ops).
 export const ROLE_NAV: Record<Role, ScreenId[]> = {
-  ceo: ['m1', 'm3', 'm4', 'm7', 'm8', 'm9'],
+  ceo: ['m1', 'm3', 'm4', 'm7', 'm8', 'm9', 'm10'],
   bm: ['m1', 'm3', 'm4', 'm5', 'm7', 'm9'],
   ops: ['m1', 'm5', 'm6', 'm7'],
 }
@@ -50,6 +50,11 @@ export const SCREENS: Record<ScreenId, { label: string; title: string; sub: stri
     title: 'Mục tiêu & so sánh KPI doanh thu',
     sub: 'BM đặt mục tiêu ngày/tháng/quý/năm — cộng dồn & chia đều nếu chưa đạt',
   },
+  m10: {
+    label: 'Thương hiệu & Shop',
+    title: 'Quản lý thương hiệu & shop',
+    sub: 'Thêm thương hiệu, gắn shop TikTok/Shopee và cấu hình credential để lấy dữ liệu — chỉ CEO',
+  },
 }
 
 export const SCREEN_ICONS: Record<ScreenId, string> = {
@@ -61,6 +66,7 @@ export const SCREEN_ICONS: Record<ScreenId, string> = {
   m7: '▦',
   m8: '⚙',
   m9: '⊛',
+  m10: '⬡',
 }
 
 export const ROLE_META: { id: Role; label: string; desc: string; initial: string }[] = [

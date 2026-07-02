@@ -9,15 +9,20 @@ import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import {
   SEED_BOOKINGS,
+  SEED_BRANDS,
   SEED_KPI_BRANDS,
   SEED_KPI_MONTHS,
   SEED_KPI_YEAR,
   SEED_PRODUCTS,
+  SEED_SHOPS,
   SEED_USERS,
+  type ShopMode,
+  type ShopPlatform,
   type UserChannel,
   type UserPlatform,
   type UserRole,
 } from './seed'
+import { decryptJson, encryptJson } from './crypto'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = path.join(__dirname, 'data')
@@ -67,6 +72,93 @@ export interface KpiMonthly {
   months: number[]
 }
 
+export interface BrandRow {
+  id: number
+  key: string
+  name: string
+  active: boolean
+}
+
+/** TikTok shop credentials (server-only; never sent to the browser in the clear). */
+export interface TikTokShopCreds {
+  appKey?: string
+  appSecret?: string
+  accessToken?: string
+  shopCipher?: string
+  baseUrl?: string
+  bizAccessToken?: string
+  advertiserId?: string
+  bizBaseUrl?: string
+}
+
+/** Shopee shop credentials (server-only). */
+export interface ShopeeShopCreds {
+  partnerId?: string
+  partnerKey?: string
+  accessToken?: string
+  shopId?: string
+  baseUrl?: string
+}
+
+/** OAuth refresh fields shared by both platforms (auto-refresh of access_token). */
+export interface OAuthFields {
+  /** Long-lived refresh token used to mint a fresh access_token when it expires. */
+  refreshToken?: string
+  /** Unix SECONDS the current access_token expires at (set after each refresh). */
+  tokenExpiresAt?: number
+}
+
+export type ShopCreds = TikTokShopCreds & ShopeeShopCreds & OAuthFields
+
+/** Last connection-test outcome, persisted so the shop list shows status + when. */
+export interface ShopTestStatus {
+  /** ISO timestamp of the last test (undefined = never tested). */
+  lastTestAt?: string
+  lastTestOk?: boolean
+  lastTestMsg?: string
+}
+
+/** A shop with DECRYPTED credentials — server-internal only (fetch layer). */
+export interface ShopRow extends ShopTestStatus {
+  id: number
+  brandKey: string
+  platform: ShopPlatform
+  name: string
+  mode: ShopMode
+  active: boolean
+  credentials: ShopCreds
+}
+
+/** A shop as returned to the browser — credentials are MASKED (booleans only). */
+export interface ShopMasked extends ShopTestStatus {
+  id: number
+  brandKey: string
+  platform: ShopPlatform
+  name: string
+  mode: ShopMode
+  active: boolean
+  /** Which credential fields have a value set (never the values themselves). */
+  configured: Record<string, boolean>
+  /** True if a refresh token is stored (enables auto-refresh). */
+  autoRefresh: boolean
+}
+
+/** Credential field names shown/collected per platform (order = UI order). */
+export const CRED_FIELDS: Record<ShopPlatform, string[]> = {
+  tiktok: [
+    'appKey',
+    'appSecret',
+    'accessToken',
+    'refreshToken',
+    'shopCipher',
+    'bizAccessToken',
+    'advertiserId',
+    'baseUrl',
+    'bizBaseUrl',
+  ],
+  shopee: ['partnerId', 'partnerKey', 'accessToken', 'refreshToken', 'shopId', 'baseUrl'],
+}
+
 mkdirSync(DATA_DIR, { recursive: true })
 const db = new Database(DB_PATH)
 // Durable per-commit: rollback journal + FULL sync means a committed write is in
@@ -109,6 +201,21 @@ db.exec(`
     target REAL NOT NULL,
     PRIMARY KEY (year, month, brand)
   );
+  CREATE TABLE IF NOT EXISTS brands (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT UNIQUE NOT NULL, -- slug used as the brand filter value everywhere
+    name TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE TABLE IF NOT EXISTS shops (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    brand_key TEXT NOT NULL,               -- -> brands.key
+    platform TEXT NOT NULL,                -- 'tiktok' | 'shopee'
+    name TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'sample',   -- 'sample' | 'live'
+    active INTEGER NOT NULL DEFAULT 1,
+    credentials TEXT NOT NULL DEFAULT ''   -- AES-256-GCM encrypted JSON blob
+  );
 `)
 
 // ---- guarded migrations (run AFTER CREATE TABLE so existing dbs upgrade cleanly) ----
@@ -122,6 +229,11 @@ function addColumnIfMissing(table: string, column: string, ddl: string): void {
 // Login password (prototype): store a hash only, never plaintext. Nullable so
 // existing users migrate with no password set.
 addColumnIfMissing('users', 'password_hash', 'password_hash TEXT')
+
+// Per-shop last connection-test status (nullable; set by POST /api/shops/:id/test).
+addColumnIfMissing('shops', 'last_test_at', 'last_test_at TEXT')
+addColumnIfMissing('shops', 'last_test_ok', 'last_test_ok INTEGER')
+addColumnIfMissing('shops', 'last_test_msg', 'last_test_msg TEXT')
 
 // KPI targets became PER-BRAND: the PK changed from (year,month) to (year,month,brand).
 // SQLite can't alter a PK in place, so if an old (brand-less) kpi_monthly exists,
@@ -189,6 +301,24 @@ if (kpiCount === 0) {
   const tx = db.transaction(() => {
     for (const brand of SEED_KPI_BRANDS)
       for (let m = 1; m <= 12; m++) ins.run(SEED_KPI_YEAR, m, brand, SEED_KPI_MONTHS[m - 1])
+  })
+  tx()
+}
+const brandCount = (db.prepare('SELECT COUNT(*) AS n FROM brands').get() as { n: number }).n
+if (brandCount === 0) {
+  const ins = db.prepare('INSERT INTO brands (key, name, active) VALUES (?, ?, 1)')
+  const tx = db.transaction(() => {
+    for (const b of SEED_BRANDS) ins.run(b.key, b.name)
+  })
+  tx()
+}
+const shopCount = (db.prepare('SELECT COUNT(*) AS n FROM shops').get() as { n: number }).n
+if (shopCount === 0) {
+  const ins = db.prepare(
+    'INSERT INTO shops (brand_key, platform, name, mode, active, credentials) VALUES (?,?,?,?,1,?)',
+  )
+  const tx = db.transaction(() => {
+    for (const s of SEED_SHOPS) ins.run(s.brandKey, s.platform, s.name, s.mode, '')
   })
   tx()
 }
@@ -456,4 +586,253 @@ export function setKpiMonth(year: number, month: number, brand: string, target: 
       'ON CONFLICT(year, month, brand) DO UPDATE SET target = excluded.target',
   ).run(year, month, brand, Math.round(target))
   return getKpiMonthly(year, brand)
+}
+
+// ---- brands (multi-brand) ----
+
+function rowToBrand(r: Record<string, unknown>): BrandRow {
+  return {
+    id: r.id as number,
+    key: r.key as string,
+    name: r.name as string,
+    active: (r.active as number) === 1,
+  }
+}
+
+export function listBrands(): BrandRow[] {
+  return (
+    db.prepare('SELECT * FROM brands ORDER BY name').all() as Array<Record<string, unknown>>
+  ).map(rowToBrand)
+}
+
+export function getBrand(id: number): BrandRow | undefined {
+  const r = db.prepare('SELECT * FROM brands WHERE id = ?').get(id) as
+    | Record<string, unknown>
+    | undefined
+  return r ? rowToBrand(r) : undefined
+}
+
+/** Slugify a brand key (lowercase, ascii, dashes) — stable id for the filter value. */
+function slugify(raw: string): string {
+  return raw
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/đ/gi, 'd')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+/** Insert a brand. If key omitted, derive from name. Throws on duplicate key. */
+export function addBrand(input: { key?: string; name: string }): BrandRow {
+  const key = slugify(input.key || input.name)
+  if (!key) throw new Error('brand key/name required')
+  const existing = db.prepare('SELECT id FROM brands WHERE key = ?').get(key)
+  if (existing) throw new Error(`brand key '${key}' already exists`)
+  const info = db
+    .prepare('INSERT INTO brands (key, name, active) VALUES (?, ?, 1)')
+    .run(key, input.name)
+  return getBrand(Number(info.lastInsertRowid))!
+}
+
+export function updateBrand(
+  id: number,
+  patch: { name?: string; active?: boolean },
+): BrandRow | undefined {
+  const cur = getBrand(id)
+  if (!cur) return undefined
+  const name = patch.name ?? cur.name
+  const active = patch.active ?? cur.active
+  db.prepare('UPDATE brands SET name = ?, active = ? WHERE id = ?').run(name, active ? 1 : 0, id)
+  return getBrand(id)
+}
+
+/** Delete a brand. Blocked (throws) if it still has shops attached. */
+export function deleteBrand(id: number): boolean {
+  const b = getBrand(id)
+  if (!b) return false
+  const shopN = (
+    db.prepare('SELECT COUNT(*) AS n FROM shops WHERE brand_key = ?').get(b.key) as { n: number }
+  ).n
+  if (shopN > 0) throw new Error(`brand '${b.key}' still has ${shopN} shop(s) — remove them first`)
+  return db.prepare('DELETE FROM brands WHERE id = ?').run(id).changes > 0
+}
+
+// ---- shops (per-brand, per-platform; credentials encrypted at rest) ----
+
+function rowToShop(r: Record<string, unknown>): ShopRow {
+  return {
+    id: r.id as number,
+    brandKey: r.brand_key as string,
+    platform: r.platform as ShopPlatform,
+    name: r.name as string,
+    mode: r.mode as ShopMode,
+    active: (r.active as number) === 1,
+    credentials: decryptJson<ShopCreds>(r.credentials as string),
+    lastTestAt: (r.last_test_at as string) || undefined,
+    lastTestOk: r.last_test_ok == null ? undefined : (r.last_test_ok as number) === 1,
+    lastTestMsg: (r.last_test_msg as string) || undefined,
+  }
+}
+
+/** Mask a decrypted shop for the browser: never expose secret values. */
+export function maskShop(s: ShopRow): ShopMasked {
+  const fields = CRED_FIELDS[s.platform] ?? []
+  const configured: Record<string, boolean> = {}
+  for (const f of fields) {
+    const v = (s.credentials as Record<string, unknown>)[f]
+    configured[f] = typeof v === 'string' ? v.trim() !== '' : v != null
+  }
+  return {
+    id: s.id,
+    brandKey: s.brandKey,
+    platform: s.platform,
+    name: s.name,
+    mode: s.mode,
+    active: s.active,
+    configured,
+    autoRefresh: !!s.credentials.refreshToken,
+    lastTestAt: s.lastTestAt,
+    lastTestOk: s.lastTestOk,
+    lastTestMsg: s.lastTestMsg,
+  }
+}
+
+/** List shops (decrypted — server-internal). Filter by brand/platform/active. */
+export function listShops(filter?: {
+  brandKey?: string
+  platform?: ShopPlatform
+  activeOnly?: boolean
+}): ShopRow[] {
+  const rows = db
+    .prepare('SELECT * FROM shops ORDER BY brand_key, platform, id')
+    .all() as Array<Record<string, unknown>>
+  return rows
+    .map(rowToShop)
+    .filter((s) => {
+      if (filter?.brandKey && filter.brandKey !== 'group' && s.brandKey !== filter.brandKey)
+        return false
+      if (filter?.platform && s.platform !== filter.platform) return false
+      if (filter?.activeOnly && !s.active) return false
+      return true
+    })
+}
+
+/** Masked list for the API/browser. */
+export function listShopsMasked(filter?: {
+  brandKey?: string
+  platform?: ShopPlatform
+}): ShopMasked[] {
+  return listShops(filter).map(maskShop)
+}
+
+export function getShop(id: number): ShopRow | undefined {
+  const r = db.prepare('SELECT * FROM shops WHERE id = ?').get(id) as
+    | Record<string, unknown>
+    | undefined
+  return r ? rowToShop(r) : undefined
+}
+
+/** Only keep non-empty credential fields valid for the platform. */
+function cleanCreds(platform: ShopPlatform, raw: Record<string, unknown> | undefined): ShopCreds {
+  const out: Record<string, string> = {}
+  if (!raw) return out
+  for (const f of CRED_FIELDS[platform] ?? []) {
+    const v = raw[f]
+    if (typeof v === 'string' && v.trim() !== '') out[f] = v.trim()
+  }
+  return out as ShopCreds
+}
+
+export function addShop(input: {
+  brandKey: string
+  platform: ShopPlatform
+  name: string
+  mode?: ShopMode
+  active?: boolean
+  credentials?: Record<string, unknown>
+}): ShopMasked {
+  const creds = cleanCreds(input.platform, input.credentials)
+  const info = db
+    .prepare(
+      'INSERT INTO shops (brand_key, platform, name, mode, active, credentials) VALUES (?,?,?,?,?,?)',
+    )
+    .run(
+      input.brandKey,
+      input.platform,
+      input.name,
+      input.mode ?? 'sample',
+      input.active === false ? 0 : 1,
+      encryptJson(creds),
+    )
+  return maskShop(getShop(Number(info.lastInsertRowid))!)
+}
+
+/**
+ * Update a shop. credentials are MERGED: only fields provided (non-empty) overwrite;
+ * omitted fields keep their stored value (so the UI never has to re-send secrets).
+ */
+export function updateShop(
+  id: number,
+  patch: {
+    name?: string
+    mode?: ShopMode
+    active?: boolean
+    credentials?: Record<string, unknown>
+  },
+): ShopMasked | undefined {
+  const cur = getShop(id)
+  if (!cur) return undefined
+  const name = patch.name ?? cur.name
+  const mode = patch.mode ?? cur.mode
+  const active = patch.active ?? cur.active
+  let credBlob: string
+  if (patch.credentials) {
+    const incoming = cleanCreds(cur.platform, patch.credentials)
+    const merged = { ...cur.credentials, ...incoming }
+    credBlob = encryptJson(merged)
+  } else {
+    credBlob = encryptJson(cur.credentials)
+  }
+  db.prepare('UPDATE shops SET name = ?, mode = ?, active = ?, credentials = ? WHERE id = ?').run(
+    name,
+    mode,
+    active ? 1 : 0,
+    credBlob,
+    id,
+  )
+  return maskShop(getShop(id)!)
+}
+
+export function deleteShop(id: number): boolean {
+  return db.prepare('DELETE FROM shops WHERE id = ?').run(id).changes > 0
+}
+
+/** Record the outcome of a connection test (persisted; shown on the shop list). */
+export function recordShopTest(id: number, ok: boolean, message: string, at: string): void {
+  db.prepare('UPDATE shops SET last_test_at = ?, last_test_ok = ?, last_test_msg = ? WHERE id = ?').run(
+    at,
+    ok ? 1 : 0,
+    message.slice(0, 500),
+    id,
+  )
+}
+
+/**
+ * Persist refreshed OAuth tokens for a shop (from the auto-refresh flow). Merges into
+ * the existing encrypted credentials — bypasses cleanCreds so tokenExpiresAt (a number,
+ * not a UI field) is retained. Returns the updated (decrypted) shop.
+ */
+export function setShopTokens(
+  id: number,
+  tokens: { accessToken?: string; refreshToken?: string; tokenExpiresAt?: number },
+): ShopRow | undefined {
+  const cur = getShop(id)
+  if (!cur) return undefined
+  const merged: ShopCreds = { ...cur.credentials }
+  if (tokens.accessToken) merged.accessToken = tokens.accessToken
+  if (tokens.refreshToken) merged.refreshToken = tokens.refreshToken
+  if (tokens.tokenExpiresAt != null) merged.tokenExpiresAt = tokens.tokenExpiresAt
+  db.prepare('UPDATE shops SET credentials = ? WHERE id = ?').run(encryptJson(merged), id)
+  return getShop(id)
 }

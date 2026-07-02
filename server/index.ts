@@ -49,7 +49,27 @@ import {
   setUserPassword as storeSetUserPassword,
   getKpiMonthly as storeGetKpiMonthly,
   setKpiMonth as storeSetKpiMonth,
+  listBrands as storeListBrands,
+  addBrand as storeAddBrand,
+  updateBrand as storeUpdateBrand,
+  deleteBrand as storeDeleteBrand,
+  listShopsMasked as storeListShopsMasked,
+  getShop as storeGetShop,
+  addShop as storeAddShop,
+  updateShop as storeUpdateShop,
+  deleteShop as storeDeleteShop,
+  recordShopTest as storeRecordShopTest,
+  type ShopRow,
 } from './store/db'
+import {
+  resolveShops,
+  mergeCampaigns,
+  mergeCreators,
+  mergeDailyRows,
+  mergeRecon,
+  mergeTopProducts,
+} from './shops'
+import { freshTokens, withFreshToken } from './oauth'
 
 import { normalizeCampaigns, normalizeDailySpend } from './tiktokbiz/normalize'
 import {
@@ -74,7 +94,7 @@ import {
   normalizeReconOrders as normalizeShopeeRecon,
   normalizeTopProducts as normalizeShopeeTopProducts,
 } from './shopee/normalize'
-import { fetchOrdersAndEscrow, type ShopeeCreds } from './shopee/client'
+import { fetchOrdersAndEscrow, pingOrders, type ShopeeCreds } from './shopee/client'
 import { fetchAdsCampaigns, fetchAdsDaily } from './shopee/adsClient'
 import type {
   AdsCampaignRow,
@@ -92,8 +112,6 @@ import type {
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const FIXTURES = path.join(__dirname, 'fixtures')
 
-const MODE = (process.env.TIKTOK_MODE ?? 'sample').toLowerCase() as 'sample' | 'live'
-const SHOPEE_MODE = (process.env.SHOPEE_MODE ?? 'sample').toLowerCase() as 'sample' | 'live'
 const PORT = Number(process.env.PORT ?? 8790)
 const BASE_URL = process.env.TIKTOK_BASE_URL ?? 'https://open-api.tiktokglobalshop.com'
 const BIZ_BASE_URL = process.env.TIKTOK_BIZ_BASE_URL ?? 'https://business-api.tiktok.com'
@@ -122,36 +140,50 @@ function netRatioOf(rows: DailyRow[] | ShopeeDailyRow[]): number {
   return gmv ? net / gmv : 0
 }
 
-function creds(): TikTokCreds {
-  const missing = ['TIKTOK_APP_KEY', 'TIKTOK_APP_SECRET', 'TIKTOK_ACCESS_TOKEN', 'TIKTOK_SHOP_CIPHER'].filter(
-    (k) => !process.env[k],
+/** Build TikTok Shop Partner creds from a shop's stored credentials (live only). */
+function credsFromShop(shop: ShopRow): TikTokCreds {
+  const c = shop.credentials
+  const missing = (['appKey', 'appSecret', 'accessToken', 'shopCipher'] as const).filter(
+    (k) => !c[k],
   )
-  if (missing.length) throw new Error(`live mode requires env: ${missing.join(', ')}`)
+  if (missing.length)
+    throw new Error(`shop "${shop.name}" (live) thiếu credential: ${missing.join(', ')}`)
   return {
-    appKey: process.env.TIKTOK_APP_KEY!,
-    appSecret: process.env.TIKTOK_APP_SECRET!,
-    accessToken: process.env.TIKTOK_ACCESS_TOKEN!,
-    shopCipher: process.env.TIKTOK_SHOP_CIPHER!,
-    baseUrl: BASE_URL,
+    appKey: c.appKey!,
+    appSecret: c.appSecret!,
+    accessToken: c.accessToken!,
+    shopCipher: c.shopCipher!,
+    baseUrl: c.baseUrl || BASE_URL,
   }
 }
 
-/** Credentials for the TikTok API for Business (Ads) — no HMAC, header token. */
-function bizCreds(): TikTokBizCreds {
-  const missing = ['TIKTOK_BIZ_ACCESS_TOKEN', 'TIKTOK_ADVERTISER_ID'].filter((k) => !process.env[k])
-  if (missing.length) throw new Error(`live mode requires env: ${missing.join(', ')}`)
+/** Resolve a brand's active shops for a platform AND auto-refresh expiring tokens. */
+async function freshShops(platform: 'tiktok' | 'shopee', brand: string): Promise<ShopRow[]> {
+  return freshTokens(resolveShops(platform, brand))
+}
+
+/** Build TikTok API for Business (Ads) creds from a shop — no HMAC, header token. */
+function bizCredsFromShop(shop: ShopRow): TikTokBizCreds {
+  const c = shop.credentials
+  const missing = (['bizAccessToken', 'advertiserId'] as const).filter((k) => !c[k])
+  if (missing.length)
+    throw new Error(`shop "${shop.name}" (live) thiếu credential Ads: ${missing.join(', ')}`)
   return {
-    accessToken: process.env.TIKTOK_BIZ_ACCESS_TOKEN!,
-    advertiserId: process.env.TIKTOK_ADVERTISER_ID!,
-    baseUrl: BIZ_BASE_URL,
+    accessToken: c.bizAccessToken!,
+    advertiserId: c.advertiserId!,
+    baseUrl: c.bizBaseUrl || BIZ_BASE_URL,
   }
 }
 
-/** Per-day ad spend (sample fixtures or live report), keyed by YYYY-MM-DD. */
-async function adSpendByDay(start: string, end: string): Promise<Map<string, number>> {
+/** Per-day ad spend for ONE shop (sample fixtures or live report), by YYYY-MM-DD. */
+async function adSpendByDayForShop(
+  shop: ShopRow,
+  start: string,
+  end: string,
+): Promise<Map<string, number>> {
   let rows: BizReportEnvelope['data']['list']
-  if (MODE === 'live') {
-    rows = await fetchDailyReport(bizCreds(), start, end)
+  if (shop.mode === 'live') {
+    rows = await fetchDailyReport(bizCredsFromShop(shop), start, end)
   } else {
     rows = loadFixture<BizReportEnvelope>('biz_report_daily.json').data.list
   }
@@ -159,14 +191,19 @@ async function adSpendByDay(start: string, end: string): Promise<Map<string, num
   return new Map(spend.map((s) => [s.date, s.adSpend]))
 }
 
-/** TikTok Ads campaigns (sample fixtures or live report + names), normalized. */
-async function campaigns(start: string, end: string, brand: string): Promise<BizCampaign[]> {
+/** TikTok Ads campaigns for ONE shop (sample or live report + names), normalized. */
+async function campaignsForShop(
+  shop: ShopRow,
+  start: string,
+  end: string,
+  brand: string,
+): Promise<BizCampaign[]> {
   let reportRows: BizReportEnvelope['data']['list']
   let metaRows: BizCampaignRow[]
-  if (MODE === 'live') {
+  if (shop.mode === 'live') {
     ;[reportRows, metaRows] = await Promise.all([
-      fetchCampaignReport(bizCreds(), start, end),
-      fetchCampaignMeta(bizCreds()),
+      fetchCampaignReport(bizCredsFromShop(shop), start, end),
+      fetchCampaignMeta(bizCredsFromShop(shop)),
     ])
   } else {
     reportRows = loadFixture<BizReportEnvelope>('biz_report_campaign.json').data.list
@@ -176,17 +213,28 @@ async function campaigns(start: string, end: string, brand: string): Promise<Biz
   return normalizeCampaigns(reportRows, meta, brand)
 }
 
-/** Fetch raw envelopes (sample fixtures or live API), then normalize identically. */
-async function dailySeries(start: string, end: string): Promise<DailyRow[]> {
+/** TikTok Ads campaigns across a brand's shops, merged. */
+async function campaigns(start: string, end: string, brand: string): Promise<BizCampaign[]> {
+  const shops = await freshShops('tiktok', brand)
+  const per = await Promise.all(shops.map((s) => campaignsForShop(s, start, end, brand)))
+  return mergeCampaigns(per)
+}
+
+/** Daily series for ONE shop (sample fixtures or live API), same normalizer. */
+async function dailySeriesForShop(
+  shop: ShopRow,
+  start: string,
+  end: string,
+): Promise<DailyRow[]> {
   let analytics: AnalyticsEnvelope
   let finance: FinanceEnvelope
-  if (MODE === 'live') {
+  if (shop.mode === 'live') {
     // end is inclusive from the client's perspective; TikTok windows are often
     // [ge, lt), so pass end+1 day as the exclusive bound.
     const endExclusive = addDays(end, 1)
     ;[analytics, finance] = await Promise.all([
-      fetchAnalytics(creds(), start, endExclusive),
-      fetchFinanceStatements(creds(), start, endExclusive),
+      fetchAnalytics(credsFromShop(shop), start, endExclusive),
+      fetchFinanceStatements(credsFromShop(shop), start, endExclusive),
     ])
   } else {
     analytics = loadFixture<AnalyticsEnvelope>('analytics_shop_performance.json')
@@ -194,7 +242,7 @@ async function dailySeries(start: string, end: string): Promise<DailyRow[]> {
   }
   // Fetch per-day ad spend and inject it as DailyRow.ads (profit recomputed in
   // the normalizer so the P&L identity holds). Days with no spend -> 0.
-  const adsByDay = await adSpendByDay(start, MODE === 'live' ? addDays(end, 1) : end)
+  const adsByDay = await adSpendByDayForShop(shop, start, shop.mode === 'live' ? addDays(end, 1) : end)
   // "today" anchors the off (days-ago) field; use the end of the requested window.
   const today = new Date(end + 'T00:00:00Z')
   const rows = normalizeDailySeries(analytics, finance, today, adsByDay)
@@ -202,21 +250,27 @@ async function dailySeries(start: string, end: string): Promise<DailyRow[]> {
   return rows.filter((r) => r.date >= start && r.date <= end)
 }
 
-/** Credentials for Shopee Open API v2 (HMAC shop-level signing). */
-function shopeeCreds(): ShopeeCreds {
-  const missing = [
-    'SHOPEE_PARTNER_ID',
-    'SHOPEE_PARTNER_KEY',
-    'SHOPEE_ACCESS_TOKEN',
-    'SHOPEE_SHOP_ID',
-  ].filter((k) => !process.env[k])
-  if (missing.length) throw new Error(`live mode requires env: ${missing.join(', ')}`)
+/** Daily series across a brand's TikTok shops, merged day-by-day. */
+async function dailySeries(start: string, end: string, brand: string): Promise<DailyRow[]> {
+  const shops = await freshShops('tiktok', brand)
+  const per = await Promise.all(shops.map((s) => dailySeriesForShop(s, start, end)))
+  return mergeDailyRows(per)
+}
+
+/** Build Shopee Open API v2 creds from a shop's stored credentials (live only). */
+function shopeeCredsFromShop(shop: ShopRow): ShopeeCreds {
+  const c = shop.credentials
+  const missing = (['partnerId', 'partnerKey', 'accessToken', 'shopId'] as const).filter(
+    (k) => !c[k],
+  )
+  if (missing.length)
+    throw new Error(`shop "${shop.name}" (live) thiếu credential: ${missing.join(', ')}`)
   return {
-    partnerId: process.env.SHOPEE_PARTNER_ID!,
-    partnerKey: process.env.SHOPEE_PARTNER_KEY!,
-    accessToken: process.env.SHOPEE_ACCESS_TOKEN!,
-    shopId: process.env.SHOPEE_SHOP_ID!,
-    baseUrl: SHOPEE_BASE_URL,
+    partnerId: c.partnerId!,
+    partnerKey: c.partnerKey!,
+    accessToken: c.accessToken!,
+    shopId: c.shopId!,
+    baseUrl: c.baseUrl || SHOPEE_BASE_URL,
   }
 }
 
@@ -225,11 +279,15 @@ function localDayStartSec(date: string): number {
   return Date.parse(date + 'T00:00:00Z') / 1000 - 7 * 3600
 }
 
-/** Shopee per-day CPC ad spend (sample fixtures or live), keyed by YYYY-MM-DD. */
-async function shopeeAdSpendByDay(start: string, end: string): Promise<Map<string, number>> {
+/** Shopee per-day CPC ad spend for ONE shop (sample or live), by YYYY-MM-DD. */
+async function shopeeAdSpendByDayForShop(
+  shop: ShopRow,
+  start: string,
+  end: string,
+): Promise<Map<string, number>> {
   let rows: AdsDailyRow[]
-  if (SHOPEE_MODE === 'live') {
-    rows = await fetchAdsDaily(shopeeCreds(), start, end)
+  if (shop.mode === 'live') {
+    rows = await fetchAdsDaily(shopeeCredsFromShop(shop), start, end)
   } else {
     rows = loadFixture<{ response: { daily_performance_list: AdsDailyRow[] } }>(
       'shopee_ads_daily.json',
@@ -239,12 +297,17 @@ async function shopeeAdSpendByDay(start: string, end: string): Promise<Map<strin
   return new Map(spend.map((s) => [s.date, s.adSpend]))
 }
 
-/** Shopee CPC ad campaigns (sample fixtures or live), normalized to Campaign[]. */
-async function shopeeCampaigns(start: string, end: string, brand: string): Promise<ShopeeCampaign[]> {
+/** Shopee CPC ad campaigns for ONE shop (sample or live), normalized. */
+async function shopeeCampaignsForShop(
+  shop: ShopRow,
+  start: string,
+  end: string,
+  brand: string,
+): Promise<ShopeeCampaign[]> {
   let rows: AdsCampaignRow[]
-  if (SHOPEE_MODE === 'live') {
+  if (shop.mode === 'live') {
     // TODO enumerate campaign ids (get_product_campaign_setting_info / internal list).
-    rows = await fetchAdsCampaigns(shopeeCreds(), start, end, [])
+    rows = await fetchAdsCampaigns(shopeeCredsFromShop(shop), start, end, [])
   } else {
     rows = loadFixture<{ response: { campaign_list: AdsCampaignRow[] } }>(
       'shopee_ads_campaign.json',
@@ -253,15 +316,26 @@ async function shopeeCampaigns(start: string, end: string, brand: string): Promi
   return normalizeShopeeCampaigns(rows, brand)
 }
 
-/** Shopee daily series (sample fixtures or signed live calls), same normalizer. */
-async function shopeeDailySeries(start: string, end: string): Promise<ShopeeDailyRow[]> {
+/** Shopee CPC ad campaigns across a brand's shops, merged. */
+async function shopeeCampaigns(start: string, end: string, brand: string): Promise<ShopeeCampaign[]> {
+  const shops = await freshShops('shopee', brand)
+  const per = await Promise.all(shops.map((s) => shopeeCampaignsForShop(s, start, end, brand)))
+  return mergeCampaigns(per)
+}
+
+/** Shopee daily series for ONE shop (sample or signed live calls), same normalizer. */
+async function shopeeDailySeriesForShop(
+  shop: ShopRow,
+  start: string,
+  end: string,
+): Promise<ShopeeDailyRow[]> {
   let orders: OrderDetail[]
   let escrow: Map<string, OrderIncome>
-  if (SHOPEE_MODE === 'live') {
+  if (shop.mode === 'live') {
     // Window [start 00:00, end+1 00:00) in local seconds.
     const timeFrom = localDayStartSec(start)
     const timeTo = localDayStartSec(addDays(end, 1))
-    const pulled = await fetchOrdersAndEscrow(shopeeCreds(), timeFrom, timeTo)
+    const pulled = await fetchOrdersAndEscrow(shopeeCredsFromShop(shop), timeFrom, timeTo)
     orders = pulled.orders
     escrow = pulled.escrow
   } else {
@@ -272,51 +346,85 @@ async function shopeeDailySeries(start: string, end: string): Promise<ShopeeDail
     escrow = new Map(rawEscrow.orders.map((e) => [e.order_sn, e.order_income]))
   }
   // Inject per-day CPC ad spend as DailyRow.ads (profit recomputed -> residual 0).
-  const adsByDay = await shopeeAdSpendByDay(start, end)
+  const adsByDay = await shopeeAdSpendByDayForShop(shop, start, end)
   const today = new Date(end + 'T00:00:00Z')
   const rows = normalizeShopeeDailySeries(orders, escrow, today, adsByDay)
   // Clamp to the requested [start, end] window.
   return rows.filter((r) => r.date >= start && r.date <= end)
 }
 
-/** TikTok affiliate creators (sample fixtures or live), normalized to Creator[]. */
-async function tiktokCreators(start: string, end: string, brand: string): Promise<Creator[]> {
+/** Shopee daily series across a brand's shops, merged day-by-day. */
+async function shopeeDailySeries(start: string, end: string, brand: string): Promise<ShopeeDailyRow[]> {
+  const shops = await freshShops('shopee', brand)
+  const per = await Promise.all(shops.map((s) => shopeeDailySeriesForShop(s, start, end)))
+  return mergeDailyRows(per)
+}
+
+/** TikTok affiliate creators for ONE shop (sample or live), normalized. */
+async function tiktokCreatorsForShop(
+  shop: ShopRow,
+  start: string,
+  end: string,
+  brand: string,
+): Promise<Creator[]> {
   let orders: AffiliateOrder[]
-  if (MODE === 'live') {
-    orders = await fetchAffiliateOrders(creds(), start, addDays(end, 1))
+  if (shop.mode === 'live') {
+    orders = await fetchAffiliateOrders(credsFromShop(shop), start, addDays(end, 1))
   } else {
     orders = loadFixture<AffiliateOrdersEnvelope>('affiliate_orders.json').data.orders
   }
   return normalizeCreators(orders, brand)
 }
 
-/** TikTok top products (sample fixtures or live), margin via store cogs + net ratio. */
-async function tiktokTopProducts(
+/** TikTok affiliate creators across a brand's shops, merged. */
+async function tiktokCreators(start: string, end: string, brand: string): Promise<Creator[]> {
+  const shops = await freshShops('tiktok', brand)
+  const per = await Promise.all(shops.map((s) => tiktokCreatorsForShop(s, start, end, brand)))
+  return mergeCreators(per)
+}
+
+/** TikTok top products for ONE shop (sample or live), margin via store cogs + net ratio. */
+async function tiktokTopProductsForShop(
+  shop: ShopRow,
   start: string,
   end: string,
   brand: string,
 ): Promise<TiktokProductPerf[]> {
   let products: ShopProduct[]
-  if (MODE === 'live') {
-    products = await fetchShopProducts(creds(), start, addDays(end, 1))
+  if (shop.mode === 'live') {
+    products = await fetchShopProducts(credsFromShop(shop), start, addDays(end, 1))
   } else {
     products = loadFixture<ShopProductsEnvelope>('tiktok_shop_products.json').data.products
   }
-  const netRatio = netRatioOf(await dailySeries(start, end))
+  const netRatio = netRatioOf(await dailySeriesForShop(shop, start, end))
   const rows = normalizeTiktokTopProducts(products, buildCatalog(), netRatio)
   return brand === 'group' ? rows : rows.filter((r) => r.brand === brand)
 }
 
-/** TikTok recon orders (sample fixtures or live), fees from finance normalization. */
-async function tiktokReconOrders(brand: string): Promise<TiktokReconOrder[]> {
+/** TikTok top products across a brand's shops, merged by sku. */
+async function tiktokTopProducts(
+  start: string,
+  end: string,
+  brand: string,
+): Promise<TiktokProductPerf[]> {
+  const shops = await freshShops('tiktok', brand)
+  const per = await Promise.all(shops.map((s) => tiktokTopProductsForShop(s, start, end, brand)))
+  return mergeTopProducts(per)
+}
+
+/** TikTok recon orders for ONE shop (sample or live), fees from finance normalization. */
+async function tiktokReconOrdersForShop(
+  shop: ShopRow,
+  brand: string,
+): Promise<TiktokReconOrder[]> {
   let search: OrderSearchEnvelope
   let finance: FinanceEnvelope
   let analytics: AnalyticsEnvelope
-  if (MODE === 'live') {
+  if (shop.mode === 'live') {
     ;[search, finance, analytics] = await Promise.all([
-      fetchOrderSearch(creds(), '2026-06-19', '2026-07-03'), // TODO window from caller
-      fetchFinanceStatements(creds(), '2026-06-19', '2026-07-03'),
-      fetchAnalytics(creds(), '2026-06-19', '2026-07-03'),
+      fetchOrderSearch(credsFromShop(shop), '2026-06-19', '2026-07-03'), // TODO window from caller
+      fetchFinanceStatements(credsFromShop(shop), '2026-06-19', '2026-07-03'),
+      fetchAnalytics(credsFromShop(shop), '2026-06-19', '2026-07-03'),
     ])
   } else {
     search = loadFixture<OrderSearchEnvelope>('tiktok_order_search.json')
@@ -327,15 +435,23 @@ async function tiktokReconOrders(brand: string): Promise<TiktokReconOrder[]> {
   return brand === 'group' ? rows : rows.filter((r) => r.brand === brand)
 }
 
-/** Shopee order details + escrow (sample fixtures or live). */
-async function shopeeOrdersAndEscrow(
+/** TikTok recon orders across a brand's shops, merged. */
+async function tiktokReconOrders(brand: string): Promise<TiktokReconOrder[]> {
+  const shops = await freshShops('tiktok', brand)
+  const per = await Promise.all(shops.map((s) => tiktokReconOrdersForShop(s, brand)))
+  return mergeRecon(per)
+}
+
+/** Shopee order details + escrow for ONE shop (sample fixtures or live). */
+async function shopeeOrdersAndEscrowForShop(
+  shop: ShopRow,
   start: string,
   end: string,
 ): Promise<{ orders: OrderDetail[]; escrow: Map<string, OrderIncome> }> {
-  if (SHOPEE_MODE === 'live') {
+  if (shop.mode === 'live') {
     const timeFrom = localDayStartSec(start)
     const timeTo = localDayStartSec(addDays(end, 1))
-    return fetchOrdersAndEscrow(shopeeCreds(), timeFrom, timeTo)
+    return fetchOrdersAndEscrow(shopeeCredsFromShop(shop), timeFrom, timeTo)
   }
   const orders = loadFixture<OrderDetailResponse>('shopee_order_detail.json').response.order_list
   const rawEscrow = loadFixture<{ orders: { order_sn: string; order_income: OrderIncome }[] }>(
@@ -344,25 +460,45 @@ async function shopeeOrdersAndEscrow(
   return { orders, escrow: new Map(rawEscrow.orders.map((e) => [e.order_sn, e.order_income])) }
 }
 
-/** Shopee top products (sample fixtures or live), margin via store cogs + net ratio. */
+/** Shopee top products for ONE shop (sample or live), margin via store cogs + net ratio. */
+async function shopeeTopProductsForShop(
+  shop: ShopRow,
+  start: string,
+  end: string,
+  brand: string,
+): Promise<ShopeeProductPerf[]> {
+  const { orders } = await shopeeOrdersAndEscrowForShop(shop, start, end)
+  const netRatio = netRatioOf(await shopeeDailySeriesForShop(shop, start, end))
+  const rows = normalizeShopeeTopProducts(orders, buildCatalog() as ShopeeCatalog, netRatio)
+  return brand === 'group' ? rows : rows.filter((r) => r.brand === brand)
+}
+
+/** Shopee top products across a brand's shops, merged by sku. */
 async function shopeeTopProducts(
   start: string,
   end: string,
   brand: string,
 ): Promise<ShopeeProductPerf[]> {
-  const { orders } = await shopeeOrdersAndEscrow(start, end)
-  const netRatio = netRatioOf(await shopeeDailySeries(start, end))
-  const rows = normalizeShopeeTopProducts(orders, buildCatalog() as ShopeeCatalog, netRatio)
+  const shops = await freshShops('shopee', brand)
+  const per = await Promise.all(shops.map((s) => shopeeTopProductsForShop(s, start, end, brand)))
+  return mergeTopProducts(per)
+}
+
+/** Shopee recon orders for ONE shop (sample or live), fees from escrow normalization. */
+async function shopeeReconOrdersForShop(
+  shop: ShopRow,
+  brand: string,
+): Promise<ShopeeReconOrder[]> {
+  const { orders, escrow } = await shopeeOrdersAndEscrowForShop(shop, '2026-06-19', '2026-07-02')
+  const rows = normalizeShopeeRecon(orders, escrow, buildCatalog() as ShopeeCatalog)
   return brand === 'group' ? rows : rows.filter((r) => r.brand === brand)
 }
 
-/** Shopee recon orders (sample fixtures or live), fees from escrow normalization. */
+/** Shopee recon orders across a brand's shops, merged (most recent first). */
 async function shopeeReconOrders(brand: string): Promise<ShopeeReconOrder[]> {
-  const { orders, escrow } = await shopeeOrdersAndEscrow('2026-06-19', '2026-07-02')
-  // Recon lists individual orders; cap for a manageable table (most recent first).
-  const rows = normalizeShopeeRecon(orders, escrow, buildCatalog() as ShopeeCatalog)
-  const scoped = brand === 'group' ? rows : rows.filter((r) => r.brand === brand)
-  return scoped.slice(0, 60)
+  const shops = await freshShops('shopee', brand)
+  const per = await Promise.all(shops.map((s) => shopeeReconOrdersForShop(s, brand)))
+  return mergeRecon(per, 60)
 }
 
 function addDays(date: string, n: number): string {
@@ -371,12 +507,51 @@ function addDays(date: string, n: number): string {
   return d.toISOString().slice(0, 10)
 }
 
+/**
+ * Probe a shop's connectivity with a single lightweight real API call. Sample shops
+ * short-circuit to OK (no creds needed). Live shops make one signed call per platform
+ * (TikTok analytics; +Ads report if biz creds set / Shopee order list) and surface the
+ * platform's own error message on failure. Never throws — always resolves a result.
+ */
+async function testShopConnection(
+  shop: ShopRow,
+): Promise<{ ok: boolean; message: string }> {
+  if (shop.mode === 'sample') {
+    return {
+      ok: true,
+      message: 'Shop đang ở chế độ sample — dùng dữ liệu mẫu, chưa gọi API thật. Chuyển sang LIVE để test kết nối thật.',
+    }
+  }
+  // Real-clock 2-day window; for a connection probe the exact dates don't matter.
+  const end = new Date().toISOString().slice(0, 10)
+  const start = addDays(end, -2)
+  try {
+    if (shop.platform === 'tiktok') {
+      await fetchAnalytics(credsFromShop(shop), start, addDays(end, 1))
+      let adsNote = ''
+      if (shop.credentials.bizAccessToken && shop.credentials.advertiserId) {
+        await fetchDailyReport(bizCredsFromShop(shop), start, end)
+        adsNote = ' + Ads (Business) API OK'
+      }
+      return { ok: true, message: `Kết nối TikTok Shop OK${adsNote}.` }
+    }
+    const now = Math.floor(Date.now() / 1000)
+    await pingOrders(shopeeCredsFromShop(shop), now - 2 * 86400, now)
+    return { ok: true, message: 'Kết nối Shopee OK.' }
+  } catch (err) {
+    return { ok: false, message: (err as Error).message }
+  }
+}
+
 const app = express()
 app.use(cors())
 app.use(express.json())
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, mode: MODE, shopeeMode: SHOPEE_MODE, port: PORT })
+  // Mode is now per-shop (see /api/shops); report shop counts instead of a global mode.
+  const shops = storeListShopsMasked()
+  const live = shops.filter((s) => s.mode === 'live').length
+  res.json({ ok: true, port: PORT, shops: shops.length, liveShops: live })
 })
 
 app.get('/api/tiktok/daily-series', async (req, res) => {
@@ -391,7 +566,7 @@ app.get('/api/tiktok/daily-series', async (req, res) => {
     return
   }
   try {
-    const rows = await dailySeries(start, end)
+    const rows = await dailySeries(start, end, brand)
     res.json(rows)
   } catch (err) {
     console.error(`[daily-series] brand=${brand}`, err)
@@ -408,7 +583,7 @@ app.get('/api/tiktok/campaigns', async (req, res) => {
     return
   }
   try {
-    const list = await campaigns(start, MODE === 'live' ? addDays(end, 1) : end, brand)
+    const list = await campaigns(start, end, brand)
     res.json(list)
   } catch (err) {
     console.error(`[campaigns] brand=${brand}`, err)
@@ -426,7 +601,7 @@ app.get('/api/shopee/daily-series', async (req, res) => {
     return
   }
   try {
-    const rows = await shopeeDailySeries(start, end)
+    const rows = await shopeeDailySeries(start, end, brand)
     res.json(rows)
   } catch (err) {
     console.error(`[shopee daily-series] brand=${brand}`, err)
@@ -655,10 +830,125 @@ app.put('/api/kpi-monthly', (req, res) => {
   res.json(storeSetKpiMonth(year, month, brand, target))
 })
 
+// ---- brands + shops (multi-brand / multi-shop config; CEO-only in the UI) ----
+
+app.get('/api/brands', (_req, res) => {
+  res.json(storeListBrands())
+})
+
+app.post('/api/brands', (req, res) => {
+  const b = req.body ?? {}
+  if (typeof b.name !== 'string' || !b.name.trim()) {
+    res.status(400).json({ error: 'name required' })
+    return
+  }
+  try {
+    res.json(storeAddBrand({ key: b.key, name: b.name.trim() }))
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message })
+  }
+})
+
+app.put('/api/brands/:id', (req, res) => {
+  const b = req.body ?? {}
+  const updated = storeUpdateBrand(Number(req.params.id), {
+    name: typeof b.name === 'string' ? b.name : undefined,
+    active: typeof b.active === 'boolean' ? b.active : undefined,
+  })
+  if (!updated) {
+    res.status(404).json({ error: 'brand not found' })
+    return
+  }
+  res.json(updated)
+})
+
+app.delete('/api/brands/:id', (req, res) => {
+  try {
+    const ok = storeDeleteBrand(Number(req.params.id))
+    res.status(ok ? 200 : 404).json({ ok })
+  } catch (err) {
+    res.status(409).json({ error: (err as Error).message })
+  }
+})
+
+app.get('/api/shops', (req, res) => {
+  const brand = req.query.brand as string | undefined
+  const platform = req.query.platform as 'tiktok' | 'shopee' | undefined
+  res.json(storeListShopsMasked({ brandKey: brand, platform }))
+})
+
+app.post('/api/shops', (req, res) => {
+  const s = req.body ?? {}
+  if (!s.brandKey || (s.platform !== 'tiktok' && s.platform !== 'shopee') || !s.name) {
+    res.status(400).json({ error: 'brandKey, platform (tiktok|shopee), name required' })
+    return
+  }
+  if (s.mode && s.mode !== 'sample' && s.mode !== 'live') {
+    res.status(400).json({ error: 'mode must be sample|live' })
+    return
+  }
+  const brandExists = storeListBrands().some((b) => b.key === s.brandKey)
+  if (!brandExists) {
+    res.status(400).json({ error: `brand '${s.brandKey}' không tồn tại` })
+    return
+  }
+  res.json(
+    storeAddShop({
+      brandKey: s.brandKey,
+      platform: s.platform,
+      name: s.name,
+      mode: s.mode,
+      active: s.active,
+      credentials: s.credentials,
+    }),
+  )
+})
+
+app.put('/api/shops/:id', (req, res) => {
+  const s = req.body ?? {}
+  if (s.mode && s.mode !== 'sample' && s.mode !== 'live') {
+    res.status(400).json({ error: 'mode must be sample|live' })
+    return
+  }
+  const updated = storeUpdateShop(Number(req.params.id), {
+    name: typeof s.name === 'string' ? s.name : undefined,
+    mode: s.mode,
+    active: typeof s.active === 'boolean' ? s.active : undefined,
+    credentials:
+      s.credentials && typeof s.credentials === 'object' ? s.credentials : undefined,
+  })
+  if (!updated) {
+    res.status(404).json({ error: 'shop not found' })
+    return
+  }
+  res.json(updated)
+})
+
+app.delete('/api/shops/:id', (req, res) => {
+  const ok = storeDeleteShop(Number(req.params.id))
+  res.status(ok ? 200 : 404).json({ ok })
+})
+
+app.post('/api/shops/:id/test', async (req, res) => {
+  const shop = storeGetShop(Number(req.params.id))
+  if (!shop) {
+    res.status(404).json({ ok: false, message: 'shop not found' })
+    return
+  }
+  // Auto-refresh an expiring token first, then probe, then persist the outcome so the
+  // shop list shows the latest status + timestamp.
+  const fresh = await withFreshToken(shop)
+  const result = await testShopConnection(fresh)
+  storeRecordShopTest(fresh.id, result.ok, result.message, new Date().toISOString())
+  res.json(result)
+})
+
 app.listen(PORT, () => {
+  const shops = storeListShopsMasked()
+  const live = shops.filter((s) => s.mode === 'live').length
   console.log(
-    `BFF listening on :${PORT} (tiktok=${MODE}, shopee=${SHOPEE_MODE}, ` +
-      `shop=${BASE_URL}, biz=${BIZ_BASE_URL}, shopeeApi=${SHOPEE_BASE_URL})`,
+    `BFF listening on :${PORT} (${storeListBrands().length} brands, ${shops.length} shops, ` +
+      `${live} live; shop=${BASE_URL}, biz=${BIZ_BASE_URL}, shopeeApi=${SHOPEE_BASE_URL})`,
   )
 })
 

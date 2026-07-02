@@ -27,6 +27,21 @@ export function sign(input: ShopeeSignInput): string {
 }
 
 /**
+ * PUBLIC-level signature (Shopee auth endpoints like /api/v2/auth/access_token/get):
+ *   base = partner_id + api_path + timestamp   (NO access_token / shop_id)
+ *   sign = HMAC_SHA256(key=partner_key, msg=base) as lowercase hex.
+ */
+export function publicSign(
+  partnerId: string | number,
+  partnerKey: string,
+  path: string,
+  timestamp: number,
+): string {
+  const base = `${partnerId}${path}${timestamp}`
+  return crypto.createHmac('sha256', partnerKey).update(base).digest('hex')
+}
+
+/**
  * Build the common signed query params every shop-level call needs:
  * partner_id, timestamp, access_token, shop_id, sign.
  */

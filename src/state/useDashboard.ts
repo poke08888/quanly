@@ -17,6 +17,18 @@ import {
   saveKpiMonth as saveKpiMonthStore,
   type KpiMonthly,
 } from '../data/kpiStore'
+import {
+  fetchBrands,
+  fetchShops,
+  addBrand as addBrandStore,
+  updateBrand as updateBrandStore,
+  deleteBrand as deleteBrandStore,
+  addShop as addShopStore,
+  updateShop as updateShopStore,
+  deleteShop as deleteShopStore,
+  type BrandConfig,
+  type ShopConfig,
+} from '../data/brandShopStore'
 import { periodSpan, type KpiPeriod } from '../lib/kpiProgress'
 import { PERIODS, BRANDS, TODAY } from '../data/connectors/mock/mockData'
 
@@ -108,6 +120,21 @@ export function useDashboard() {
 
   const [data, setData] = useState<DashboardData | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // ----- brands + shops config (M10, CEO-only) -----
+  const [brands, setBrands] = useState<BrandConfig[]>([])
+  const [shops, setShops] = useState<ShopConfig[]>([])
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([fetchBrands(), fetchShops()]).then(([bs, ss]) => {
+      if (cancelled) return
+      setBrands(bs)
+      setShops(ss)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [reload])
 
   useEffect(() => {
     let cancelled = false
@@ -221,6 +248,32 @@ export function useDashboard() {
     setReload((n) => n + 1)
   }
 
+  // ----- M10 brands + shops config (persisted via BFF; CEO-only screen) -----
+  async function addBrand(input: { name: string; key?: string }) {
+    await addBrandStore(input)
+    setReload((n) => n + 1)
+  }
+  async function saveBrand(id: number, patch: { name?: string; active?: boolean }) {
+    await updateBrandStore(id, patch)
+    setReload((n) => n + 1)
+  }
+  async function removeBrand(id: number) {
+    await deleteBrandStore(id)
+    setReload((n) => n + 1)
+  }
+  async function addShop(input: Parameters<typeof addShopStore>[0]) {
+    await addShopStore(input)
+    setReload((n) => n + 1)
+  }
+  async function saveShop(id: number, patch: Parameters<typeof updateShopStore>[1]) {
+    await updateShopStore(id, patch)
+    setReload((n) => n + 1)
+  }
+  async function removeShop(id: number) {
+    await deleteShopStore(id)
+    setReload((n) => n + 1)
+  }
+
   return {
     // filters
     role,
@@ -232,7 +285,14 @@ export function useDashboard() {
     setPlatform,
     brand,
     setBrand,
-    brandOptions: [{ id: 'group', name: 'Toàn group' }, ...BRANDS],
+    // Brand filter options come from the persisted brand store (active brands only);
+    // fall back to the mock BRANDS when the store is empty/unreachable.
+    brandOptions: [
+      { id: 'group', name: 'Toàn group' },
+      ...(brands.filter((b) => b.active).length
+        ? brands.filter((b) => b.active).map((b) => ({ id: b.key, name: b.name }))
+        : BRANDS.map((b) => ({ id: b.id, name: b.name }))),
+    ],
     periodId,
     setPeriodId,
     periods: PERIODS,
@@ -265,6 +325,16 @@ export function useDashboard() {
     kpiYear,
     setKpiYear,
     canEditKpi: role === 'bm' || role === 'ceo',
+    // M10 (brands + shops config, CEO-only)
+    brands,
+    shops,
+    addBrand,
+    saveBrand,
+    removeBrand,
+    addShop,
+    saveShop,
+    removeShop,
+    reloadData: () => setReload((n) => n + 1),
     // M6
     expandedOrder,
     setExpandedOrder,
