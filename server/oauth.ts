@@ -35,6 +35,38 @@ interface RefreshResult {
   tokenExpiresAt?: number
 }
 
+/** Exchange a one-time auth_code (from the seller authorization redirect) for tokens. */
+export async function exchangeTikTokCode(
+  appKey: string,
+  appSecret: string,
+  authCode: string,
+): Promise<RefreshResult> {
+  const qs = new URLSearchParams({
+    app_key: appKey,
+    app_secret: appSecret,
+    auth_code: authCode,
+    grant_type: 'authorized_code',
+  })
+  // TODO confirm exact path/version against the sandbox (/api/v2/token/get).
+  const url = `${TIKTOK_AUTH_URL}/api/v2/token/get?${qs.toString()}`
+  const res = await fetch(url, { method: 'GET', headers: { 'Content-Type': 'application/json' } })
+  const json = (await res.json()) as {
+    code?: number
+    message?: string
+    data?: { access_token?: string; access_token_expire_in?: number; refresh_token?: string }
+  }
+  if (!res.ok || (json.code != null && json.code !== 0)) {
+    throw new Error(`TikTok token exchange code ${json.code}: ${json.message ?? res.status}`)
+  }
+  const d = json.data ?? {}
+  if (!d.access_token) throw new Error('TikTok token exchange: no access_token in response')
+  return {
+    accessToken: d.access_token,
+    refreshToken: d.refresh_token,
+    tokenExpiresAt: toExpiresAt(d.access_token_expire_in),
+  }
+}
+
 /** TikTok Shop Partner API token refresh (app_key + app_secret + refresh_token). */
 async function refreshTikTok(shop: ShopRow): Promise<RefreshResult> {
   const c = shop.credentials

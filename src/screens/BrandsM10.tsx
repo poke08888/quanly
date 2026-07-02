@@ -6,6 +6,7 @@ import type { DashboardState } from '../state/useDashboard'
 import {
   CRED_FIELDS,
   testShop,
+  tiktokOAuthStartUrl,
   type BrandConfig,
   type ShopConfig,
   type ShopMode,
@@ -169,6 +170,26 @@ function ShopRow({ sh, s }: { sh: ShopConfig; s: DashboardState }) {
     s.reloadData()
   }
 
+  /** Open TikTok seller-authorization in a popup; reload when it reports back. */
+  function connectTikTok() {
+    const popup = window.open(tiktokOAuthStartUrl(sh.id), 'tiktok-oauth', 'width=580,height=740')
+    const onMsg = (e: MessageEvent) => {
+      if (e.data === 'tiktok-oauth-done') {
+        window.removeEventListener('message', onMsg)
+        s.reloadData()
+      }
+    }
+    window.addEventListener('message', onMsg)
+    // Fallback: poll for the popup closing (in case postMessage is blocked).
+    const timer = setInterval(() => {
+      if (popup?.closed) {
+        clearInterval(timer)
+        window.removeEventListener('message', onMsg)
+        s.reloadData()
+      }
+    }, 1000)
+  }
+
   async function saveCreds() {
     const nonEmpty = Object.fromEntries(Object.entries(creds).filter(([, v]) => v.trim() !== ''))
     await s.saveShop(sh.id, { credentials: nonEmpty })
@@ -215,6 +236,15 @@ function ShopRow({ sh, s }: { sh: ShopConfig; s: DashboardState }) {
         <button onClick={() => setOpen((o) => !o)} style={btnGhost}>
           {open ? 'Ẩn credential' : `Credential (${configuredCount}/${fields.length})`}
         </button>
+        {sh.platform === 'tiktok' && (
+          <button
+            onClick={connectTikTok}
+            style={{ ...btnGhost, borderColor: '#191c22', color: '#191c22', fontWeight: 700 }}
+            title="Ủy quyền shop qua TikTok để tự lấy access token, refresh token và shop_cipher"
+          >
+            🔗 Kết nối TikTok Shop
+          </button>
+        )}
         <button
           onClick={runTest}
           disabled={testState === 'testing'}
@@ -268,6 +298,16 @@ function ShopRow({ sh, s }: { sh: ShopConfig; s: DashboardState }) {
 
       {open && (
         <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #edeef3' }}>
+          {sh.platform === 'tiktok' && (
+            <div style={{ marginBottom: 10, fontSize: 11.5, color: '#33418f', background: '#eef1fb', border: '1px solid #ccd4f0', borderRadius: 8, padding: '8px 11px' }}>
+              <b>Kết nối tự động:</b> chỉ cần nhập <b>App Key</b>, <b>App Secret</b>, <b>Service ID</b> rồi bấm{' '}
+              <b>🔗 Kết nối TikTok Shop</b> — access/refresh token + shop_cipher sẽ tự điền. Trong TikTok Partner Center,
+              đăng ký <b>Redirect URL</b> của app là:{' '}
+              <code style={{ background: '#fff', padding: '1px 5px', borderRadius: 4 }}>
+                {location.origin}/api/tiktok/oauth/callback
+              </code>
+            </div>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
             {fields.map((f) => (
               <div key={f.key}>

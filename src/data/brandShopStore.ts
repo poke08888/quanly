@@ -37,6 +37,7 @@ export const CRED_FIELDS: Record<ShopPlatform, { key: string; label: string; sec
   tiktok: [
     { key: 'appKey', label: 'App Key', secret: false },
     { key: 'appSecret', label: 'App Secret', secret: true },
+    { key: 'serviceId', label: 'Service ID (để "Kết nối TikTok Shop")', secret: false },
     { key: 'accessToken', label: 'Access Token', secret: true },
     { key: 'refreshToken', label: 'Refresh Token (auto-refresh)', secret: true },
     { key: 'shopCipher', label: 'Shop Cipher', secret: false },
@@ -151,6 +152,11 @@ export async function updateShop(
 
 export async function deleteShop(id: number): Promise<void> {
   await fetch(`${BFF_URL}/api/shops/${id}`, { method: 'DELETE' })
+}
+
+/** URL that starts the TikTok Shop seller-authorization flow for a shop (open in a popup). */
+export function tiktokOAuthStartUrl(id: number): string {
+  return `${BFF_URL}/api/tiktok/oauth/start?shopId=${id}`
 }
 
 /** Probe a shop's live connectivity (one real API call server-side). */

@@ -83,6 +83,8 @@ export interface BrandRow {
 export interface TikTokShopCreds {
   appKey?: string
   appSecret?: string
+  /** Partner "service_id" used to build the seller authorization URL (OAuth start). */
+  serviceId?: string
   accessToken?: string
   shopCipher?: string
   baseUrl?: string
@@ -148,6 +150,7 @@ export const CRED_FIELDS: Record<ShopPlatform, string[]> = {
   tiktok: [
     'appKey',
     'appSecret',
+    'serviceId',
     'accessToken',
     'refreshToken',
     'shopCipher',
@@ -825,7 +828,12 @@ export function recordShopTest(id: number, ok: boolean, message: string, at: str
  */
 export function setShopTokens(
   id: number,
-  tokens: { accessToken?: string; refreshToken?: string; tokenExpiresAt?: number },
+  tokens: {
+    accessToken?: string
+    refreshToken?: string
+    tokenExpiresAt?: number
+    shopCipher?: string
+  },
 ): ShopRow | undefined {
   const cur = getShop(id)
   if (!cur) return undefined
@@ -833,6 +841,7 @@ export function setShopTokens(
   if (tokens.accessToken) merged.accessToken = tokens.accessToken
   if (tokens.refreshToken) merged.refreshToken = tokens.refreshToken
   if (tokens.tokenExpiresAt != null) merged.tokenExpiresAt = tokens.tokenExpiresAt
+  if (tokens.shopCipher) merged.shopCipher = tokens.shopCipher
   db.prepare('UPDATE shops SET credentials = ? WHERE id = ?').run(encryptJson(merged), id)
   return getShop(id)
 }

@@ -15,6 +15,44 @@ export interface TikTokCreds {
 
 const ANALYTICS_PATH = '/analytics/202405/shop/performance'
 const FINANCE_PATH = '/finance/202309/statements'
+const AUTHORIZED_SHOPS_PATH = '/authorization/202309/shops'
+
+/** One authorized shop from Get Authorized Shops (the `cipher` is the shop_cipher). */
+export interface AuthorizedShop {
+  id?: string
+  name?: string
+  region?: string
+  seller_type?: string
+  cipher?: string
+  code?: string
+}
+
+/**
+ * Get Authorized Shops for an access token (no shop_cipher needed — this is how you
+ * DISCOVER the cipher after OAuth). Signed with app_key + app_secret + access_token.
+ */
+export async function fetchAuthorizedShops(
+  appKey: string,
+  appSecret: string,
+  accessToken: string,
+  baseUrl: string,
+): Promise<AuthorizedShop[]> {
+  const query = signedQuery(appSecret, AUTHORIZED_SHOPS_PATH, { app_key: appKey })
+  const url = buildUrl(baseUrl, AUTHORIZED_SHOPS_PATH, query)
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { 'x-tts-access-token': accessToken, 'Content-Type': 'application/json' },
+  })
+  const json = (await res.json()) as {
+    code?: number
+    message?: string
+    data?: { shops?: AuthorizedShop[] }
+  }
+  if (!res.ok || (json.code != null && json.code !== 0)) {
+    throw new Error(`TikTok authorized shops code ${json.code}: ${json.message ?? res.status}`)
+  }
+  return json.data?.shops ?? []
+}
 
 function buildUrl(baseUrl: string, path: string, query: Record<string, string>): string {
   const qs = new URLSearchParams(query).toString()

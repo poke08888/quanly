@@ -6,6 +6,7 @@
 
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import crypto from 'node:crypto'
 import path from 'node:path'
 import express from 'express'
 import cors from 'cors'
@@ -19,7 +20,12 @@ import {
   offsetOf,
   type Catalog,
 } from './tiktok/normalize'
-import { fetchAnalytics, fetchFinanceStatements, type TikTokCreds } from './tiktok/client'
+import {
+  fetchAnalytics,
+  fetchFinanceStatements,
+  fetchAuthorizedShops,
+  type TikTokCreds,
+} from './tiktok/client'
 import { fetchAffiliateOrders } from './tiktok/affiliateClient'
 import { fetchOrderSearch, fetchShopProducts } from './tiktok/catalogClient'
 import type {
@@ -59,6 +65,7 @@ import {
   updateShop as storeUpdateShop,
   deleteShop as storeDeleteShop,
   recordShopTest as storeRecordShopTest,
+  setShopTokens as storeSetShopTokens,
   type ShopRow,
 } from './store/db'
 import {
@@ -69,7 +76,7 @@ import {
   mergeRecon,
   mergeTopProducts,
 } from './shops'
-import { freshTokens, withFreshToken } from './oauth'
+import { freshTokens, withFreshToken, exchangeTikTokCode } from './oauth'
 
 import { normalizeCampaigns, normalizeDailySpend } from './tiktokbiz/normalize'
 import {
@@ -507,6 +514,33 @@ function addDays(date: string, n: number): string {
   return d.toISOString().slice(0, 10)
 }
 
+// ---- TikTok Shop OAuth (seller authorization → tokens + shop_cipher) ----
+// The seller-authorization page; after consent TikTok redirects to the app's REGISTERED
+// redirect URL (set this to <public>/api/tiktok/oauth/callback in the Partner app).
+const TIKTOK_AUTH_PAGE =
+  process.env.TIKTOK_AUTH_PAGE ?? 'https://services.tiktokshop.com/open/authorize'
+// Short-lived CSRF/state map: state -> shopId (single BFF process, in-memory is fine).
+const oauthStates = new Map<string, { shopId: number; exp: number }>()
+function newOAuthState(shopId: number): string {
+  const s = crypto.randomBytes(16).toString('hex')
+  oauthStates.set(s, { shopId, exp: Date.now() + 10 * 60_000 })
+  return s
+}
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
+}
+/** Small self-closing result page shown in the OAuth popup. */
+function oauthResultPage(ok: boolean, msg: string): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>TikTok OAuth</title></head>
+<body style="font-family:system-ui,-apple-system,sans-serif;padding:44px;text-align:center;background:#f7f8fb">
+<div style="font-size:52px">${ok ? '✅' : '❌'}</div>
+<h2 style="color:${ok ? '#0f9d6b' : '#b3261e'};margin:8px 0">${ok ? 'Kết nối thành công' : 'Kết nối thất bại'}</h2>
+<p style="color:#555;max-width:540px;margin:12px auto;font-size:14px;line-height:1.5">${escapeHtml(msg)}</p>
+<p style="color:#999;font-size:12.5px">Cửa sổ sẽ tự đóng…</p>
+<script>try{if(window.opener)window.opener.postMessage('tiktok-oauth-done','*')}catch(e){}setTimeout(function(){window.close()},2600)</script>
+</body></html>`
+}
+
 /**
  * Probe a shop's connectivity with a single lightweight real API call. Sample shops
  * short-circuit to OK (no creds needed). Live shops make one signed call per platform
@@ -941,6 +975,79 @@ app.post('/api/shops/:id/test', async (req, res) => {
   const result = await testShopConnection(fresh)
   storeRecordShopTest(fresh.id, result.ok, result.message, new Date().toISOString())
   res.json(result)
+})
+
+// Start TikTok Shop seller authorization: redirect the popup to TikTok's consent page.
+app.get('/api/tiktok/oauth/start', (req, res) => {
+  const shop = storeGetShop(Number(req.query.shopId))
+  if (!shop || shop.platform !== 'tiktok') {
+    res.status(404).send(oauthResultPage(false, 'Shop TikTok không tồn tại.'))
+    return
+  }
+  const c = shop.credentials
+  if (!c.serviceId) {
+    res
+      .status(400)
+      .send(
+        oauthResultPage(
+          false,
+          'Shop chưa có Service ID. Mở Credential của shop, nhập "Service ID" (lấy từ app trên TikTok Partner Center) và lưu, rồi bấm Kết nối lại.',
+        ),
+      )
+    return
+  }
+  const state = newOAuthState(shop.id)
+  res.redirect(`${TIKTOK_AUTH_PAGE}?service_id=${encodeURIComponent(c.serviceId)}&state=${state}`)
+})
+
+// OAuth callback: exchange auth_code -> tokens, discover shop_cipher, save to the shop.
+// Register <public-url>/api/tiktok/oauth/callback as the app's redirect URL in Partner Center.
+app.get('/api/tiktok/oauth/callback', async (req, res) => {
+  const code = String(req.query.code ?? req.query.auth_code ?? '')
+  const state = String(req.query.state ?? '')
+  const entry = oauthStates.get(state)
+  oauthStates.delete(state)
+  if (!code) {
+    res.status(400).send(oauthResultPage(false, 'TikTok không trả về auth code.'))
+    return
+  }
+  if (!entry || entry.exp < Date.now()) {
+    res.status(400).send(oauthResultPage(false, 'Phiên kết nối hết hạn hoặc không hợp lệ. Thử lại.'))
+    return
+  }
+  const shop = storeGetShop(entry.shopId)
+  if (!shop || !shop.credentials.appKey || !shop.credentials.appSecret) {
+    res.status(400).send(oauthResultPage(false, 'Shop thiếu App Key/App Secret.'))
+    return
+  }
+  const c = shop.credentials
+  try {
+    const tok = await exchangeTikTokCode(c.appKey!, c.appSecret!, code)
+    let cipher: string | undefined
+    let shopName: string | undefined
+    try {
+      const shops = await fetchAuthorizedShops(
+        c.appKey!,
+        c.appSecret!,
+        tok.accessToken,
+        c.baseUrl || BASE_URL,
+      )
+      cipher = shops[0]?.cipher
+      shopName = shops[0]?.name
+    } catch (e) {
+      console.warn('[oauth] fetch authorized shops failed:', (e as Error).message)
+    }
+    storeSetShopTokens(entry.shopId, { ...tok, shopCipher: cipher })
+    res.send(
+      oauthResultPage(
+        true,
+        `Đã lấy access token + refresh token${shopName ? ` cho shop "${shopName}"` : ''}. ` +
+          (cipher ? 'Đã tự điền shop_cipher.' : 'Chưa lấy được shop_cipher — kiểm tra quyền Authorization của app.'),
+      ),
+    )
+  } catch (err) {
+    res.status(502).send(oauthResultPage(false, (err as Error).message))
+  }
 })
 
 app.listen(PORT, () => {
