@@ -98,7 +98,7 @@ export async function fetchAnalytics(
   return getSigned<AnalyticsEnvelope>(creds, ANALYTICS_PATH, {
     granularity: 'DAY', // TODO confirm: '1D' vs 'DAY' vs 'DAILY'
     start_date_ge: start, // inclusive lower bound (YYYY-MM-DD)
-    start_date_lt: end, // exclusive upper bound (YYYY-MM-DD)
+    end_date_lt: end, // exclusive upper bound (YYYY-MM-DD) — API requires end_date_lt
   })
 }
 
