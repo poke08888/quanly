@@ -1,0 +1,304 @@
+{
+  "code": 0,
+  "message": "Success",
+  "data": {
+    "performance": {
+      "intervals": [
+        {
+          "start_date": "2026-06-19",
+          "end_date": "2026-06-20",
+          "gmv": {
+            "amount": "81600000",
+            "currency": "VND"
+          },
+          "sku_orders": 474,
+          "units_sold": 626,
+          "customers": 446,
+          "click_to_order_rate": 0.021,
+          "impressions": 370909,
+          "cancelled_amount": {
+            "amount": "2284800",
+            "currency": "VND"
+          },
+          "returned_amount": {
+            "amount": "1713600",
+            "currency": "VND"
+          }
+        },
+        {
+          "start_date": "2026-06-20",
+          "end_date": "2026-06-21",
+          "gmv": {
+            "amount": "104217600",
+            "currency": "VND"
+          },
+          "sku_orders": 606,
+          "units_sold": 800,
+          "customers": 570,
+          "click_to_order_rate": 0.024,
+          "impressions": 473716,
+          "cancelled_amount": {
+            "amount": "4064486",
+            "currency": "VND"
+          },
+          "returned_amount": {
+            "amount": "2918093",
+            "currency": "VND"
+          }
+        },
+        {
+          "start_date": "2026-06-21",
+          "end_date": "2026-06-22",
+          "gmv": {
+            "amount": "112147200",
+            "currency": "VND"
+          },
+          "sku_orders": 652,
+          "units_sold": 861,
+          "customers": 613,
+          "click_to_order_rate": 0.027,
+          "impressions": 509760,
+          "cancelled_amount": {
+            "amount": "3364416",
+            "currency": "VND"
+          },
+          "returned_amount": {
+            "amount": "3925152",
+            "currency": "VND"
+          }
+        },
+        {
+          "start_date": "2026-06-22",
+          "end_date": "2026-06-23",
+          "gmv": {
+            "amount": "101760000",
+            "currency": "VND"
+          },
+          "sku_orders": 592,
+          "units_sold": 781,
+          "customers": 556,
+          "click_to_order_rate": 0.03,
+          "impressions": 462545,
+          "cancelled_amount": {
+            "amount": "4172160",
+            "currency": "VND"
+          },
+          "returned_amount": {
+            "amount": "2442240",
+            "currency": "VND"
+          }
+        },
+        {
+          "start_date": "2026-06-23",
+          "end_date": "2026-06-24",
+          "gmv": {
+            "amount": "108480000",
+            "currency": "VND"
+          },
+          "sku_orders": 631,
+          "units_sold": 833,
+          "customers": 593,
+          "click_to_order_rate": 0.021,
+          "impressions": 493091,
+          "cancelled_amount": {
+            "amount": "3471360",
+            "currency": "VND"
+          },
+          "returned_amount": {
+            "amount": "3362880",
+            "currency": "VND"
+          }
+        },
+        {
+          "start_date": "2026-06-24",
+          "end_date": "2026-06-25",
+          "gmv": {
+            "amount": "86400000",
+            "currency": "VND"
+          },
+          "sku_orders": 502,
+          "units_sold": 663,
+          "customers": 472,
+          "click_to_order_rate": 0.024,
+          "impressions": 392727,
+          "cancelled_amount": {
+            "amount": "3715200",
+            "currency": "VND"
+          },
+          "returned_amount": {
+            "amount": "3283200",
+            "currency": "VND"
+          }
+        },
+        {
+          "start_date": "2026-06-25",
+          "end_date": "2026-06-26",
+          "gmv": {
+            "amount": "93120000",
+            "currency": "VND"
+          },
+          "sku_orders": 541,
+          "units_sold": 714,
+          "customers": 509,
+          "click_to_order_rate": 0.027,
+          "impressions": 423273,
+          "cancelled_amount": {
+            "amount": "3166080",
+            "currency": "VND"
+          },
+          "returned_amount": {
+            "amount": "2514240",
+            "currency": "VND"
+          }
+        },
+        {
+          "start_date": "2026-06-26",
+          "end_date": "2026-06-27",
+          "gmv": {
+            "amount": "99840000",
+            "currency": "VND"
+          },
+          "sku_orders": 580,
+          "units_sold": 766,
+          "customers": 545,
+          "click_to_order_rate": 0.03,
+          "impressions": 453818,
+          "cancelled_amount": {
+            "amount": "4492800",
+            "currency": "VND"
+          },
+          "returned_amount": {
+            "amount": "3394560",
+            "currency": "VND"
+          }
+        },
+        {
+          "start_date": "2026-06-27",
+          "end_date": "2026-06-28",
+          "gmv": {
+            "amount": "125740800",
+            "currency": "VND"
+          },
+          "sku_orders": 731,
+          "units_sold": 965,
+          "customers": 687,
+          "click_to_order_rate": 0.021,
+          "impressions": 571549,
+          "cancelled_amount": {
+            "amount": "4526669",
+            "currency": "VND"
+          },
+          "returned_amount": {
+            "amount": "2892038",
+            "currency": "VND"
+          }
+        },
+        {
+          "start_date": "2026-06-28",
+          "end_date": "2026-06-29",
+          "gmv": {
+            "amount": "99686400",
+            "currency": "VND"
+          },
+          "sku_orders": 580,
+          "units_sold": 766,
+          "customers": 545,
+          "click_to_order_rate": 0.024,
+          "impressions": 453120,
+          "cancelled_amount": {
+            "amount": "4685261",
+            "currency": "VND"
+          },
+          "returned_amount": {
+            "amount": "2990592",
+            "currency": "VND"
+          }
+        },
+        {
+          "start_date": "2026-06-29",
+          "end_date": "2026-06-30",
+          "gmv": {
+            "amount": "91200000",
+            "currency": "VND"
+          },
+          "sku_orders": 530,
+          "units_sold": 700,
+          "customers": 498,
+          "click_to_order_rate": 0.027,
+          "impressions": 414545,
+          "cancelled_amount": {
+            "amount": "3465600",
+            "currency": "VND"
+          },
+          "returned_amount": {
+            "amount": "3374400",
+            "currency": "VND"
+          }
+        },
+        {
+          "start_date": "2026-06-30",
+          "end_date": "2026-07-01",
+          "gmv": {
+            "amount": "97920000",
+            "currency": "VND"
+          },
+          "sku_orders": 569,
+          "units_sold": 751,
+          "customers": 535,
+          "click_to_order_rate": 0.03,
+          "impressions": 445091,
+          "cancelled_amount": {
+            "amount": "2839680",
+            "currency": "VND"
+          },
+          "returned_amount": {
+            "amount": "2545920",
+            "currency": "VND"
+          }
+        },
+        {
+          "start_date": "2026-07-01",
+          "end_date": "2026-07-02",
+          "gmv": {
+            "amount": "104640000",
+            "currency": "VND"
+          },
+          "sku_orders": 608,
+          "units_sold": 803,
+          "customers": 572,
+          "click_to_order_rate": 0.021,
+          "impressions": 475636,
+          "cancelled_amount": {
+            "amount": "4185600",
+            "currency": "VND"
+          },
+          "returned_amount": {
+            "amount": "3453120",
+            "currency": "VND"
+          }
+        },
+        {
+          "start_date": "2026-07-02",
+          "end_date": "2026-07-03",
+          "gmv": {
+            "amount": "82560000",
+            "currency": "VND"
+          },
+          "sku_orders": 480,
+          "units_sold": 634,
+          "customers": 451,
+          "click_to_order_rate": 0.024,
+          "impressions": 375273,
+          "cancelled_amount": {
+            "amount": "2559360",
+            "currency": "VND"
+          },
+          "returned_amount": {
+            "amount": "1816320",
+            "currency": "VND"
+          }
+        }
+      ]
+    }
+  }
+}

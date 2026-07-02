@@ -1,0 +1,223 @@
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "list": [
+      {
+        "dimensions": {
+          "stat_time_day": "2026-06-19"
+        },
+        "metrics": {
+          "spend": "19428571",
+          "impressions": "571429",
+          "clicks": "8571",
+          "ctr": "1.5000",
+          "cpc": "2267",
+          "cpm": "34000",
+          "complete_payment_roas": "4.2000",
+          "total_complete_payment": "81600000"
+        }
+      },
+      {
+        "dimensions": {
+          "stat_time_day": "2026-06-20"
+        },
+        "metrics": {
+          "spend": "24813714",
+          "impressions": "729815",
+          "clicks": "10947",
+          "ctr": "1.5000",
+          "cpc": "2267",
+          "cpm": "34000",
+          "complete_payment_roas": "4.2000",
+          "total_complete_payment": "104217600"
+        }
+      },
+      {
+        "dimensions": {
+          "stat_time_day": "2026-06-21"
+        },
+        "metrics": {
+          "spend": "26701714",
+          "impressions": "785345",
+          "clicks": "11780",
+          "ctr": "1.5000",
+          "cpc": "2267",
+          "cpm": "34000",
+          "complete_payment_roas": "4.2000",
+          "total_complete_payment": "112147200"
+        }
+      },
+      {
+        "dimensions": {
+          "stat_time_day": "2026-06-22"
+        },
+        "metrics": {
+          "spend": "24228571",
+          "impressions": "712605",
+          "clicks": "10689",
+          "ctr": "1.5000",
+          "cpc": "2267",
+          "cpm": "34000",
+          "complete_payment_roas": "4.2000",
+          "total_complete_payment": "101760000"
+        }
+      },
+      {
+        "dimensions": {
+          "stat_time_day": "2026-06-23"
+        },
+        "metrics": {
+          "spend": "25828571",
+          "impressions": "759664",
+          "clicks": "11395",
+          "ctr": "1.5000",
+          "cpc": "2267",
+          "cpm": "34000",
+          "complete_payment_roas": "4.2000",
+          "total_complete_payment": "108480000"
+        }
+      },
+      {
+        "dimensions": {
+          "stat_time_day": "2026-06-24"
+        },
+        "metrics": {
+          "spend": "20571429",
+          "impressions": "605042",
+          "clicks": "9076",
+          "ctr": "1.5000",
+          "cpc": "2267",
+          "cpm": "34000",
+          "complete_payment_roas": "4.2000",
+          "total_complete_payment": "86400000"
+        }
+      },
+      {
+        "dimensions": {
+          "stat_time_day": "2026-06-25"
+        },
+        "metrics": {
+          "spend": "22171429",
+          "impressions": "652101",
+          "clicks": "9782",
+          "ctr": "1.5000",
+          "cpc": "2267",
+          "cpm": "34000",
+          "complete_payment_roas": "4.2000",
+          "total_complete_payment": "93120000"
+        }
+      },
+      {
+        "dimensions": {
+          "stat_time_day": "2026-06-26"
+        },
+        "metrics": {
+          "spend": "23771429",
+          "impressions": "699160",
+          "clicks": "10487",
+          "ctr": "1.5000",
+          "cpc": "2267",
+          "cpm": "34000",
+          "complete_payment_roas": "4.2000",
+          "total_complete_payment": "99840000"
+        }
+      },
+      {
+        "dimensions": {
+          "stat_time_day": "2026-06-27"
+        },
+        "metrics": {
+          "spend": "29938286",
+          "impressions": "880538",
+          "clicks": "13208",
+          "ctr": "1.5000",
+          "cpc": "2267",
+          "cpm": "34000",
+          "complete_payment_roas": "4.2000",
+          "total_complete_payment": "125740800"
+        }
+      },
+      {
+        "dimensions": {
+          "stat_time_day": "2026-06-28"
+        },
+        "metrics": {
+          "spend": "23734857",
+          "impressions": "698084",
+          "clicks": "10471",
+          "ctr": "1.5000",
+          "cpc": "2267",
+          "cpm": "34000",
+          "complete_payment_roas": "4.2000",
+          "total_complete_payment": "99686400"
+        }
+      },
+      {
+        "dimensions": {
+          "stat_time_day": "2026-06-29"
+        },
+        "metrics": {
+          "spend": "21714286",
+          "impressions": "638655",
+          "clicks": "9580",
+          "ctr": "1.5000",
+          "cpc": "2267",
+          "cpm": "34000",
+          "complete_payment_roas": "4.2000",
+          "total_complete_payment": "91200000"
+        }
+      },
+      {
+        "dimensions": {
+          "stat_time_day": "2026-06-30"
+        },
+        "metrics": {
+          "spend": "23314286",
+          "impressions": "685714",
+          "clicks": "10286",
+          "ctr": "1.5000",
+          "cpc": "2267",
+          "cpm": "34000",
+          "complete_payment_roas": "4.2000",
+          "total_complete_payment": "97920000"
+        }
+      },
+      {
+        "dimensions": {
+          "stat_time_day": "2026-07-01"
+        },
+        "metrics": {
+          "spend": "24914286",
+          "impressions": "732773",
+          "clicks": "10992",
+          "ctr": "1.5000",
+          "cpc": "2267",
+          "cpm": "34000",
+          "complete_payment_roas": "4.2000",
+          "total_complete_payment": "104640000"
+        }
+      },
+      {
+        "dimensions": {
+          "stat_time_day": "2026-07-02"
+        },
+        "metrics": {
+          "spend": "19657143",
+          "impressions": "578151",
+          "clicks": "8672",
+          "ctr": "1.5000",
+          "cpc": "2267",
+          "cpm": "34000",
+          "complete_payment_roas": "4.2000",
+          "total_complete_payment": "82560000"
+        }
+      }
+    ],
+    "page_info": {
+      "total_number": 14,
+      "page": 1,
+      "page_size": 100
+    }
+  }
+}

@@ -1,0 +1,188 @@
+{
+  "code": 0,
+  "message": "Success",
+  "data": {
+    "products": [
+      {
+        "seller_sku": "NL-SRM-30",
+        "product_name": "Serum B5 Phục hồi 30ml",
+        "gmv": {
+          "amount": "118509478",
+          "currency": "VND"
+        },
+        "units_sold": 627,
+        "sku_orders": 514
+      },
+      {
+        "seller_sku": "NL-KEM-50",
+        "product_name": "Kem dưỡng Ceramide 50g",
+        "gmv": {
+          "amount": "173531735",
+          "currency": "VND"
+        },
+        "units_sold": 697,
+        "sku_orders": 572
+      },
+      {
+        "seller_sku": "NL-SRM-B3",
+        "product_name": "Serum Niacinamide 10% 30ml",
+        "gmv": {
+          "amount": "143904366",
+          "currency": "VND"
+        },
+        "units_sold": 852,
+        "sku_orders": 699
+      },
+      {
+        "seller_sku": "NL-TAY-150",
+        "product_name": "Tẩy trang Micellar 150ml",
+        "gmv": {
+          "amount": "198926623",
+          "currency": "VND"
+        },
+        "units_sold": 2009,
+        "sku_orders": 1647
+      },
+      {
+        "seller_sku": "NL-CHO-100",
+        "product_name": "Sữa rửa mặt Amino 100g",
+        "gmv": {
+          "amount": "84649627",
+          "currency": "VND"
+        },
+        "units_sold": 656,
+        "sku_orders": 538
+      },
+      {
+        "seller_sku": "NL-MAT-60",
+        "product_name": "Mặt nạ ngủ Peptide 60g",
+        "gmv": {
+          "amount": "69835942",
+          "currency": "VND"
+        },
+        "units_sold": 390,
+        "sku_orders": 320
+      },
+      {
+        "seller_sku": "NL-CC-30",
+        "product_name": "Kem chống nắng SPF50 30g",
+        "gmv": {
+          "amount": "97347071",
+          "currency": "VND"
+        },
+        "units_sold": 453,
+        "sku_orders": 371
+      },
+      {
+        "seller_sku": "NL-SET-3",
+        "product_name": "Set Phục hồi da 3 món",
+        "gmv": {
+          "amount": "82533386",
+          "currency": "VND"
+        },
+        "units_sold": 188,
+        "sku_orders": 154
+      },
+      {
+        "seller_sku": "LM-SON-01",
+        "product_name": "Son kem lì Velvet 04",
+        "gmv": {
+          "amount": "67719701",
+          "currency": "VND"
+        },
+        "units_sold": 426,
+        "sku_orders": 349
+      },
+      {
+        "seller_sku": "LM-CUSH-02",
+        "product_name": "Cushion Glow SPF35",
+        "gmv": {
+          "amount": "47615415",
+          "currency": "VND"
+        },
+        "units_sold": 180,
+        "sku_orders": 148
+      },
+      {
+        "seller_sku": "LM-MASC-03",
+        "product_name": "Mascara Longwear",
+        "gmv": {
+          "amount": "40208573",
+          "currency": "VND"
+        },
+        "units_sold": 259,
+        "sku_orders": 212
+      },
+      {
+        "seller_sku": "LM-PHAN-04",
+        "product_name": "Phấn phủ kiềm dầu",
+        "gmv": {
+          "amount": "32801730",
+          "currency": "VND"
+        },
+        "units_sold": 177,
+        "sku_orders": 145
+      },
+      {
+        "seller_sku": "LM-KE-05",
+        "product_name": "Kẻ mắt nước 24h",
+        "gmv": {
+          "amount": "46557295",
+          "currency": "VND"
+        },
+        "units_sold": 405,
+        "sku_orders": 332
+      },
+      {
+        "seller_sku": "HB-DAU-01",
+        "product_name": "Dầu gội thảo mộc 300ml",
+        "gmv": {
+          "amount": "39150452",
+          "currency": "VND"
+        },
+        "units_sold": 237,
+        "sku_orders": 194
+      },
+      {
+        "seller_sku": "HB-XA-02",
+        "product_name": "Xả bưởi 300ml",
+        "gmv": {
+          "amount": "31743610",
+          "currency": "VND"
+        },
+        "units_sold": 205,
+        "sku_orders": 168
+      },
+      {
+        "seller_sku": "HB-TAM-03",
+        "product_name": "Sữa tắm gừng 400ml",
+        "gmv": {
+          "amount": "45499174",
+          "currency": "VND"
+        },
+        "units_sold": 314,
+        "sku_orders": 257
+      },
+      {
+        "seller_sku": "HB-TINH-04",
+        "product_name": "Tinh dầu bưởi 50ml",
+        "gmv": {
+          "amount": "38092332",
+          "currency": "VND"
+        },
+        "units_sold": 282,
+        "sku_orders": 231
+      },
+      {
+        "seller_sku": "HB-KEM-05",
+        "product_name": "Kem tay cúc La Mã",
+        "gmv": {
+          "amount": "30685490",
+          "currency": "VND"
+        },
+        "units_sold": 323,
+        "sku_orders": 265
+      }
+    ]
+  }
+}

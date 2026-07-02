@@ -1,0 +1,15 @@
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "list": [
+      { "campaign_id": "biz_cp01", "campaign_name": "GMV Max – Serum B5", "objective_type": "PRODUCT_SALES" },
+      { "campaign_id": "biz_cp02", "campaign_name": "Video Shopping – Set Phục hồi", "objective_type": "PRODUCT_SALES" },
+      { "campaign_id": "biz_cp03", "campaign_name": "LIVE Boost – Mega Live 7.7", "objective_type": "PRODUCT_SALES" },
+      { "campaign_id": "biz_cp04", "campaign_name": "Traffic – Landing Serum", "objective_type": "TRAFFIC" },
+      { "campaign_id": "biz_cp05", "campaign_name": "GMV Max – Son Velvet", "objective_type": "PRODUCT_SALES" },
+      { "campaign_id": "biz_cp06", "campaign_name": "Reach – Brand 7.7", "objective_type": "REACH" }
+    ],
+    "page_info": { "total_number": 6, "page": 1, "page_size": 100 }
+  }
+}

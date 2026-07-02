@@ -1,0 +1,115 @@
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "list": [
+      {
+        "dimensions": {
+          "campaign_id": "biz_cp01"
+        },
+        "metrics": {
+          "spend": "91252020",
+          "impressions": "2168537",
+          "clicks": "34697",
+          "ctr": "1.6000",
+          "cpc": "2630",
+          "cpm": "42080",
+          "conversion": "2082",
+          "cost_per_conversion": "43829",
+          "complete_payment_roas": "5.1000",
+          "total_complete_payment": "465385302"
+        }
+      },
+      {
+        "dimensions": {
+          "campaign_id": "biz_cp02"
+        },
+        "metrics": {
+          "spend": "60834680",
+          "impressions": "1571144",
+          "clicks": "28281",
+          "ctr": "1.8000",
+          "cpc": "2151",
+          "cpm": "38720",
+          "conversion": "1697",
+          "cost_per_conversion": "35848",
+          "complete_payment_roas": "3.6000",
+          "total_complete_payment": "219004848"
+        }
+      },
+      {
+        "dimensions": {
+          "campaign_id": "biz_cp03"
+        },
+        "metrics": {
+          "spend": "72241182",
+          "impressions": "1806933",
+          "clicks": "37946",
+          "ctr": "2.1000",
+          "cpc": "1904",
+          "cpm": "39980",
+          "conversion": "2277",
+          "cost_per_conversion": "31726",
+          "complete_payment_roas": "5.8000",
+          "total_complete_payment": "418998856"
+        }
+      },
+      {
+        "dimensions": {
+          "campaign_id": "biz_cp04"
+        },
+        "metrics": {
+          "spend": "30417340",
+          "impressions": "860219",
+          "clicks": "17204",
+          "ctr": "2.0000",
+          "cpc": "1768",
+          "cpm": "35360",
+          "conversion": "1032",
+          "cost_per_conversion": "29474",
+          "complete_payment_roas": "2.9000",
+          "total_complete_payment": "88210286"
+        }
+      },
+      {
+        "dimensions": {
+          "campaign_id": "biz_cp05"
+        },
+        "metrics": {
+          "spend": "53230345",
+          "impressions": "1405236",
+          "clicks": "22484",
+          "ctr": "1.6000",
+          "cpc": "2367",
+          "cpm": "37880",
+          "conversion": "1349",
+          "cost_per_conversion": "39459",
+          "complete_payment_roas": "4.4000",
+          "total_complete_payment": "234213518"
+        }
+      },
+      {
+        "dimensions": {
+          "campaign_id": "biz_cp06"
+        },
+        "metrics": {
+          "spend": "22813005",
+          "impressions": "660863",
+          "clicks": "11896",
+          "ctr": "1.8000",
+          "cpc": "1918",
+          "cpm": "34520",
+          "conversion": "714",
+          "cost_per_conversion": "31951",
+          "complete_payment_roas": "2.4000",
+          "total_complete_payment": "54751212"
+        }
+      }
+    ],
+    "page_info": {
+      "total_number": 6,
+      "page": 1,
+      "page_size": 100
+    }
+  }
+}

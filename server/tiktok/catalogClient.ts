@@ -1,0 +1,78 @@
+// Live TikTok Shop Partner API v2 client for product performance + order search.
+// Reuses the SAME HMAC signing (sign.ts) + TikTok Shop creds + base host. Field
+// names/paths are best-effort (// TODO confirm). Only reached when TIKTOK_MODE=live.
+
+import { signedQuery } from './sign'
+import type { TikTokCreds } from './client'
+import type { OrderSearchEnvelope, SearchedOrder, ShopProduct, ShopProductsEnvelope } from './types'
+
+const SHOP_PRODUCTS_PATH = '/analytics/202405/shop_products/performance'
+const ORDER_SEARCH_PATH = '/order/202309/orders/search'
+
+function buildUrl(baseUrl: string, path: string, query: Record<string, string>): string {
+  return `${baseUrl}${path}?${new URLSearchParams(query).toString()}`
+}
+
+async function getSigned<T>(
+  creds: TikTokCreds,
+  path: string,
+  params: Record<string, string | number | undefined>,
+): Promise<T> {
+  const query = signedQuery(creds.appSecret, path, {
+    app_key: creds.appKey,
+    shop_cipher: creds.shopCipher,
+    ...params,
+  })
+  const res = await fetch(buildUrl(creds.baseUrl, path, query), {
+    method: 'GET',
+    headers: { 'x-tts-access-token': creds.accessToken, 'Content-Type': 'application/json' },
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`TikTok ${path} HTTP ${res.status}: ${text.slice(0, 300)}`)
+  }
+  const json = (await res.json()) as T & { code?: number; message?: string }
+  if (json.code != null && json.code !== 0) {
+    throw new Error(`TikTok ${path} code ${json.code}: ${json.message}`)
+  }
+  return json
+}
+
+export async function fetchShopProducts(
+  creds: TikTokCreds,
+  start: string,
+  end: string,
+): Promise<ShopProduct[]> {
+  // TODO confirm param names/granularity for product performance.
+  const env = await getSigned<ShopProductsEnvelope>(creds, SHOP_PRODUCTS_PATH, {
+    start_date_ge: start,
+    start_date_lt: end,
+    granularity: 'ALL', // TODO confirm (period total vs daily)
+  })
+  return env.data?.products ?? []
+}
+
+export async function fetchOrderSearch(
+  creds: TikTokCreds,
+  start: string,
+  end: string,
+): Promise<OrderSearchEnvelope> {
+  // TODO confirm param names for the order-search time window + pagination.
+  const all: SearchedOrder[] = []
+  let pageToken: string | undefined
+  let guard = 0
+  let last: OrderSearchEnvelope | undefined
+  do {
+    const env = await getSigned<OrderSearchEnvelope>(creds, ORDER_SEARCH_PATH, {
+      create_time_ge: start,
+      create_time_lt: end,
+      page_size: 50,
+      page_token: pageToken,
+    })
+    last = env
+    all.push(...(env.data?.orders ?? []))
+    pageToken = env.data?.next_page_token || undefined
+    guard++
+  } while (pageToken && guard < 100)
+  return { code: last?.code ?? 0, message: last?.message ?? 'ok', data: { orders: all } }
+}

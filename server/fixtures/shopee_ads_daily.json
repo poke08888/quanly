@@ -1,0 +1,176 @@
+{
+  "error": "",
+  "message": "",
+  "response": {
+    "daily_performance_list": [
+      {
+        "date": "19-06-2026",
+        "impression": "527586",
+        "clicks": "7386",
+        "ctr": "0.0140",
+        "expense": "14772414",
+        "broad_gmv": "54264013",
+        "broad_order": "343",
+        "direct_gmv": "33643688",
+        "direct_order": "213",
+        "cpc": "2000"
+      },
+      {
+        "date": "20-06-2026",
+        "impression": "673821",
+        "clicks": "9433",
+        "ctr": "0.0140",
+        "expense": "18866979",
+        "broad_gmv": "75755561",
+        "broad_order": "479",
+        "direct_gmv": "46968448",
+        "direct_order": "297",
+        "cpc": "2000"
+      },
+      {
+        "date": "21-06-2026",
+        "impression": "725090",
+        "clicks": "10151",
+        "ctr": "0.0140",
+        "expense": "20302510",
+        "broad_gmv": "74534756",
+        "broad_order": "472",
+        "direct_gmv": "46211549",
+        "direct_order": "292",
+        "cpc": "2000"
+      },
+      {
+        "date": "22-06-2026",
+        "impression": "657931",
+        "clicks": "9211",
+        "ctr": "0.0140",
+        "expense": "18422069",
+        "broad_gmv": "73078510",
+        "broad_order": "463",
+        "direct_gmv": "45308676",
+        "direct_order": "287",
+        "cpc": "2000"
+      },
+      {
+        "date": "23-06-2026",
+        "impression": "701379",
+        "clicks": "9819",
+        "ctr": "0.0140",
+        "expense": "19638621",
+        "broad_gmv": "78766191",
+        "broad_order": "499",
+        "direct_gmv": "48835038",
+        "direct_order": "309",
+        "cpc": "2000"
+      },
+      {
+        "date": "24-06-2026",
+        "impression": "558621",
+        "clicks": "7821",
+        "ctr": "0.0140",
+        "expense": "15641379",
+        "broad_gmv": "59785587",
+        "broad_order": "378",
+        "direct_gmv": "37067064",
+        "direct_order": "235",
+        "cpc": "2000"
+      },
+      {
+        "date": "25-06-2026",
+        "impression": "602069",
+        "clicks": "8429",
+        "ctr": "0.0140",
+        "expense": "16857931",
+        "broad_gmv": "66249120",
+        "broad_order": "419",
+        "direct_gmv": "41074454",
+        "direct_order": "260",
+        "cpc": "2000"
+      },
+      {
+        "date": "26-06-2026",
+        "impression": "645517",
+        "clicks": "9037",
+        "ctr": "0.0140",
+        "expense": "18074483",
+        "broad_gmv": "72321912",
+        "broad_order": "458",
+        "direct_gmv": "44839585",
+        "direct_order": "284",
+        "cpc": "2000"
+      },
+      {
+        "date": "27-06-2026",
+        "impression": "812979",
+        "clicks": "11382",
+        "ctr": "0.0140",
+        "expense": "22763421",
+        "broad_gmv": "88304068",
+        "broad_order": "559",
+        "direct_gmv": "54748522",
+        "direct_order": "347",
+        "cpc": "2000"
+      },
+      {
+        "date": "28-06-2026",
+        "impression": "644524",
+        "clicks": "9023",
+        "ctr": "0.0140",
+        "expense": "18046676",
+        "broad_gmv": "72918302",
+        "broad_order": "462",
+        "direct_gmv": "45209347",
+        "direct_order": "286",
+        "cpc": "2000"
+      },
+      {
+        "date": "29-06-2026",
+        "impression": "589655",
+        "clicks": "8255",
+        "ctr": "0.0140",
+        "expense": "16510345",
+        "broad_gmv": "61651305",
+        "broad_order": "390",
+        "direct_gmv": "38223809",
+        "direct_order": "242",
+        "cpc": "2000"
+      },
+      {
+        "date": "30-06-2026",
+        "impression": "633103",
+        "clicks": "8863",
+        "ctr": "0.0140",
+        "expense": "17726897",
+        "broad_gmv": "72313577",
+        "broad_order": "458",
+        "direct_gmv": "44834418",
+        "direct_order": "284",
+        "cpc": "2000"
+      },
+      {
+        "date": "01-07-2026",
+        "impression": "676552",
+        "clicks": "9472",
+        "ctr": "0.0140",
+        "expense": "18943448",
+        "broad_gmv": "83181670",
+        "broad_order": "526",
+        "direct_gmv": "51572635",
+        "direct_order": "326",
+        "cpc": "2000"
+      },
+      {
+        "date": "02-07-2026",
+        "impression": "533793",
+        "clicks": "7473",
+        "ctr": "0.0140",
+        "expense": "14946207",
+        "broad_gmv": "62891882",
+        "broad_order": "398",
+        "direct_gmv": "38992967",
+        "direct_order": "247",
+        "cpc": "2000"
+      }
+    ]
+  }
+}

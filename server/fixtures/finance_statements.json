@@ -1,0 +1,177 @@
+{
+  "code": 0,
+  "message": "Success",
+  "data": {
+    "statements": [
+      {
+        "statement_id": "ST-2026-06-19",
+        "statement_date": "2026-06-19",
+        "currency": "VND",
+        "settlement_amount": "61305264",
+        "commission_fee": "3492072",
+        "payment_fee": "3880080",
+        "service_fee": "1396829",
+        "seller_voucher": "2172845",
+        "shipping_fee_seller": "1086422",
+        "affiliate_commission": "4811299"
+      },
+      {
+        "statement_id": "ST-2026-06-20",
+        "statement_date": "2026-06-20",
+        "currency": "VND",
+        "settlement_amount": "76815667",
+        "commission_fee": "4375576",
+        "payment_fee": "4861751",
+        "service_fee": "1750230",
+        "seller_voucher": "3208756",
+        "shipping_fee_seller": "1750230",
+        "affiliate_commission": "6611981"
+      },
+      {
+        "statement_id": "ST-2026-06-21",
+        "statement_date": "2026-06-21",
+        "currency": "VND",
+        "settlement_amount": "82837529",
+        "commission_fee": "4718593",
+        "payment_fee": "5242882",
+        "service_fee": "1887437",
+        "seller_voucher": "3984590",
+        "shipping_fee_seller": "1468007",
+        "affiliate_commission": "7759465"
+      },
+      {
+        "statement_id": "ST-2026-06-22",
+        "statement_date": "2026-06-22",
+        "currency": "VND",
+        "settlement_amount": "75165024",
+        "commission_fee": "4281552",
+        "payment_fee": "4757280",
+        "service_fee": "1712621",
+        "seller_voucher": "2949514",
+        "shipping_fee_seller": "1712621",
+        "affiliate_commission": "7611648"
+      },
+      {
+        "statement_id": "ST-2026-06-23",
+        "statement_date": "2026-06-23",
+        "currency": "VND",
+        "settlement_amount": "80300150",
+        "commission_fee": "4574059",
+        "payment_fee": "5082288",
+        "service_fee": "1829624",
+        "seller_voucher": "3659247",
+        "shipping_fee_seller": "1423041",
+        "affiliate_commission": "6708620"
+      },
+      {
+        "statement_id": "ST-2026-06-24",
+        "statement_date": "2026-06-24",
+        "currency": "VND",
+        "settlement_amount": "62727264",
+        "commission_fee": "3573072",
+        "payment_fee": "3970080",
+        "service_fee": "1429229",
+        "seller_voucher": "2302646",
+        "shipping_fee_seller": "1429229",
+        "affiliate_commission": "5716915"
+      },
+      {
+        "statement_id": "ST-2026-06-25",
+        "statement_date": "2026-06-25",
+        "currency": "VND",
+        "settlement_amount": "69077347",
+        "commission_fee": "3934786",
+        "payment_fee": "4371984",
+        "service_fee": "1573914",
+        "seller_voucher": "2972949",
+        "shipping_fee_seller": "1224156",
+        "affiliate_commission": "6820295"
+      },
+      {
+        "statement_id": "ST-2026-06-26",
+        "statement_date": "2026-06-26",
+        "currency": "VND",
+        "settlement_amount": "72642586",
+        "commission_fee": "4137869",
+        "payment_fee": "4597632",
+        "service_fee": "1655148",
+        "seller_voucher": "3586153",
+        "shipping_fee_seller": "1655148",
+        "affiliate_commission": "5884969"
+      },
+      {
+        "statement_id": "ST-2026-06-27",
+        "statement_date": "2026-06-27",
+        "currency": "VND",
+        "settlement_amount": "93474453",
+        "commission_fee": "5324494",
+        "payment_fee": "5916105",
+        "service_fee": "2129798",
+        "seller_voucher": "3786307",
+        "shipping_fee_seller": "1656509",
+        "affiliate_commission": "8282547"
+      },
+      {
+        "statement_id": "ST-2026-06-28",
+        "statement_date": "2026-06-28",
+        "currency": "VND",
+        "settlement_amount": "72688332",
+        "commission_fee": "4140475",
+        "payment_fee": "4600527",
+        "service_fee": "1656190",
+        "seller_voucher": "3404390",
+        "shipping_fee_seller": "1656190",
+        "affiliate_commission": "6992802"
+      },
+      {
+        "statement_id": "ST-2026-06-29",
+        "statement_date": "2026-06-29",
+        "currency": "VND",
+        "settlement_amount": "66644400",
+        "commission_fee": "3796200",
+        "payment_fee": "4218000",
+        "service_fee": "1518480",
+        "seller_voucher": "2530800",
+        "shipping_fee_seller": "1181040",
+        "affiliate_commission": "5230320"
+      },
+      {
+        "statement_id": "ST-2026-06-30",
+        "statement_date": "2026-06-30",
+        "currency": "VND",
+        "settlement_amount": "73102176",
+        "commission_fee": "4164048",
+        "payment_fee": "4626720",
+        "service_fee": "1665619",
+        "seller_voucher": "3238704",
+        "shipping_fee_seller": "1665619",
+        "affiliate_commission": "6292339"
+      },
+      {
+        "statement_id": "ST-2026-07-01",
+        "statement_date": "2026-07-01",
+        "currency": "VND",
+        "settlement_amount": "76631011",
+        "commission_fee": "4365058",
+        "payment_fee": "4850064",
+        "service_fee": "1746023",
+        "seller_voucher": "2716036",
+        "shipping_fee_seller": "1358018",
+        "affiliate_commission": "7178095"
+      },
+      {
+        "statement_id": "ST-2026-07-02",
+        "statement_date": "2026-07-02",
+        "currency": "VND",
+        "settlement_amount": "61765613",
+        "commission_fee": "3518294",
+        "payment_fee": "3909216",
+        "service_fee": "1407318",
+        "seller_voucher": "2580083",
+        "shipping_fee_seller": "1407318",
+        "affiliate_commission": "6254746"
+      }
+    ],
+    "total_count": 14
+  }
+}
