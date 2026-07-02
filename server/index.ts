@@ -212,7 +212,17 @@ async function adSpendByDayForShop(
 ): Promise<Map<string, number>> {
   let rows: BizReportEnvelope['data']['list']
   if (shop.mode === 'live') {
-    rows = await fetchDailyReport(bizCredsFromShop(shop), start, end)
+    // Ads (TikTok API for Business) is OPTIONAL and a SEPARATE app: if this shop has
+    // no Ads creds, or the Ads call fails, treat ad spend as 0 rather than failing the
+    // whole daily-series (revenue must still show even without an Ads integration).
+    const c = shop.credentials
+    if (!c.bizAccessToken || !c.advertiserId) return new Map()
+    try {
+      rows = await fetchDailyReport(bizCredsFromShop(shop), start, end)
+    } catch (err) {
+      console.warn(`[shop ${shop.id} "${shop.name}" ads] bỏ qua chi phí ads: ${(err as Error).message}`)
+      return new Map()
+    }
   } else {
     rows = loadFixture<BizReportEnvelope>('biz_report_daily.json').data.list
   }

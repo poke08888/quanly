@@ -96,7 +96,7 @@ export async function fetchAnalytics(
   // TODO confirm exact param names against the sandbox. The v2 analytics endpoints
   // use a granularity + date-range window; names below are best-effort.
   return getSigned<AnalyticsEnvelope>(creds, ANALYTICS_PATH, {
-    granularity: 'DAY', // TODO confirm: '1D' vs 'DAY' vs 'DAILY'
+    granularity: '1D', // allowed values: ALL | 1D (per API error)
     start_date_ge: start, // inclusive lower bound (YYYY-MM-DD)
     end_date_lt: end, // exclusive upper bound (YYYY-MM-DD) — API requires end_date_lt
   })
