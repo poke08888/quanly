@@ -7,6 +7,7 @@ import {
   CRED_FIELDS,
   testShop,
   tiktokOAuthStartUrl,
+  exchangeAuthCode,
   type BrandConfig,
   type ShopConfig,
   type ShopMode,
@@ -160,6 +161,25 @@ function ShopRow({ sh, s }: { sh: ShopConfig; s: DashboardState }) {
   const [testState, setTestState] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle')
   const [testMsg, setTestMsg] = useState('')
 
+  // manual auth_code exchange (fallback when redirect callback can't be used)
+  const [showCode, setShowCode] = useState(false)
+  const [authCode, setAuthCode] = useState('')
+  const [exState, setExState] = useState<'idle' | 'busy' | 'ok' | 'error'>('idle')
+  const [exMsg, setExMsg] = useState('')
+
+  async function submitAuthCode() {
+    if (!authCode.trim()) return
+    setExState('busy')
+    setExMsg('')
+    const r = await exchangeAuthCode(sh.id, authCode.trim())
+    setExState(r.ok ? 'ok' : 'error')
+    setExMsg(r.message)
+    if (r.ok) {
+      setAuthCode('')
+      s.reloadData()
+    }
+  }
+
   async function runTest() {
     setTestState('testing')
     setTestMsg('')
@@ -245,6 +265,15 @@ function ShopRow({ sh, s }: { sh: ShopConfig; s: DashboardState }) {
             🔗 Kết nối TikTok Shop
           </button>
         )}
+        {sh.platform === 'tiktok' && (
+          <button
+            onClick={() => setShowCode((v) => !v)}
+            style={btnGhost}
+            title="Nếu nút Kết nối không tự điền token: dán auth_code thủ công"
+          >
+            {showCode ? 'Ẩn auth_code' : '⌨ Dán auth_code'}
+          </button>
+        )}
         <button
           onClick={runTest}
           disabled={testState === 'testing'}
@@ -261,6 +290,38 @@ function ShopRow({ sh, s }: { sh: ShopConfig; s: DashboardState }) {
       {sh.mode === 'live' && configuredCount === 0 && (
         <div style={{ marginTop: 8, fontSize: 11.5, color: '#b3641e' }}>
           ⚠ Shop đang ở mode <b>live</b> nhưng chưa có credential — sẽ báo lỗi khi lấy dữ liệu.
+        </div>
+      )}
+
+      {/* manual auth_code exchange (redirect-less fallback) */}
+      {showCode && sh.platform === 'tiktok' && (
+        <div style={{ marginTop: 10, padding: '11px 13px', border: '1px solid #d9dce4', borderRadius: 10, background: '#fafbfd' }}>
+          <div style={{ fontSize: 12, color: '#33418f', marginBottom: 8, lineHeight: 1.55 }}>
+            <b>Cách lấy auth_code:</b> mở{' '}
+            <a href={tiktokOAuthStartUrl(sh.id)} target="_blank" rel="noreferrer" style={{ color: '#3d47d9', fontWeight: 700 }}>
+              trang ủy quyền
+            </a>{' '}
+            (cần App Key + App Secret + Service ID đã lưu) → Authorize shop → trình duyệt nhảy sang 1 URL,
+            trên thanh địa chỉ có đoạn <code>?code=XXXX</code> hoặc <code>&code=XXXX</code>. Copy đúng phần{' '}
+            <b>XXXX</b> (sau <code>code=</code>) rồi dán vào đây. Mã hết hạn nhanh — làm ngay.
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <input
+              placeholder="Dán auth_code ở đây"
+              value={authCode}
+              onChange={(e) => setAuthCode(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && submitAuthCode()}
+              style={{ ...inp, flex: '1 1 260px', padding: '8px 10px', fontSize: 12.5 }}
+            />
+            <button onClick={submitAuthCode} disabled={exState === 'busy'} style={{ ...btnPrimary, opacity: exState === 'busy' ? 0.6 : 1 }}>
+              {exState === 'busy' ? 'Đang đổi…' : 'Đổi lấy token + cipher'}
+            </button>
+          </div>
+          {exState !== 'idle' && exState !== 'busy' && (
+            <div style={{ marginTop: 8, fontSize: 12, fontWeight: 500, color: exState === 'ok' ? '#0f6b4c' : '#b3261e' }}>
+              {exState === 'ok' ? '✓ ' : '✗ '}{exMsg}
+            </div>
+          )}
         </div>
       )}
 

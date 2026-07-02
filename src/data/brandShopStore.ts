@@ -159,6 +159,23 @@ export function tiktokOAuthStartUrl(id: number): string {
   return `${BFF_URL}/api/tiktok/oauth/start?shopId=${id}`
 }
 
+/** Exchange a manually-pasted auth_code for tokens + shop_cipher (redirect-less fallback). */
+export async function exchangeAuthCode(
+  id: number,
+  authCode: string,
+): Promise<{ ok: boolean; message: string }> {
+  try {
+    const res = await fetch(`${BFF_URL}/api/shops/${id}/oauth/exchange`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ authCode }),
+    })
+    return (await res.json()) as { ok: boolean; message: string }
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : 'Không gọi được BFF' }
+  }
+}
+
 /** Probe a shop's live connectivity (one real API call server-side). */
 export async function testShop(id: number): Promise<{ ok: boolean; message: string }> {
   try {

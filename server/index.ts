@@ -1022,6 +1022,53 @@ app.get('/api/tiktok/oauth/start', (req, res) => {
   res.redirect(`${TIKTOK_AUTH_PAGE}?service_id=${encodeURIComponent(c.serviceId)}&state=${state}`)
 })
 
+// Manual auth_code exchange (fallback when the redirect callback can't be used, e.g.
+// custom/ERP apps whose redirect URL can't point here). The user authorizes, copies the
+// `code` from the address bar, and pastes it — same exchange as the callback.
+app.post('/api/shops/:id/oauth/exchange', async (req, res) => {
+  const shop = storeGetShop(Number(req.params.id))
+  if (!shop || shop.platform !== 'tiktok') {
+    res.status(404).json({ ok: false, message: 'Shop TikTok không tồn tại.' })
+    return
+  }
+  const authCode = String((req.body ?? {}).authCode ?? '').trim()
+  if (!authCode) {
+    res.status(400).json({ ok: false, message: 'Thiếu auth_code.' })
+    return
+  }
+  const c = shop.credentials
+  if (!c.appKey || !c.appSecret) {
+    res.status(400).json({ ok: false, message: 'Shop thiếu App Key / App Secret.' })
+    return
+  }
+  try {
+    const tok = await exchangeTikTokCode(c.appKey, c.appSecret, authCode)
+    let cipher: string | undefined
+    let shopName: string | undefined
+    try {
+      const shops = await fetchAuthorizedShops(
+        c.appKey,
+        c.appSecret,
+        tok.accessToken,
+        c.baseUrl || BASE_URL,
+      )
+      cipher = shops[0]?.cipher
+      shopName = shops[0]?.name
+    } catch (e) {
+      console.warn('[oauth] fetch authorized shops failed:', (e as Error).message)
+    }
+    storeSetShopTokens(shop.id, { ...tok, shopCipher: cipher })
+    res.json({
+      ok: true,
+      message:
+        `Đã lấy access token + refresh token${shopName ? ` cho shop "${shopName}"` : ''}. ` +
+        (cipher ? 'Đã tự điền shop_cipher.' : 'CHƯA lấy được shop_cipher — kiểm tra quyền Authorization của app.'),
+    })
+  } catch (err) {
+    res.status(502).json({ ok: false, message: (err as Error).message })
+  }
+})
+
 // OAuth callback: exchange auth_code -> tokens, discover shop_cipher, save to the shop.
 // Register <public-url>/api/tiktok/oauth/callback as the app's redirect URL in Partner Center.
 app.get('/api/tiktok/oauth/callback', async (req, res) => {
