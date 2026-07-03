@@ -4,9 +4,6 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview",
     "dev:server": "tsx watch server/index.ts",
     "start:server": "tsx server/index.ts",
     "build:server": "tsc -p tsconfig.server.json"
@@ -16,23 +13,15 @@
     "cookie": "^0.7.2",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "express": "^5.2.1"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.1.11",
     "@types/better-sqlite3": "^7.6.13",
     "@types/cookie": "^0.6.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^26.1.0",
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.3.4",
-    "tailwindcss": "^4.1.11",
     "tsx": "^4.22.4",
-    "typescript": "^5.6.3",
-    "vite": "^6.0.5"
+    "typescript": "^5.6.3"
   }
 }
