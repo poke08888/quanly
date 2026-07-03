@@ -475,6 +475,18 @@ export function setUserPassword(id: number, plainPassword: string): boolean {
   return db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, id).changes > 0
 }
 
+/** Verify email+password and return the active user, or null on failure. */
+export function checkLogin(email: string, plain: string): UserRow | null {
+  const r = db
+    .prepare('SELECT * FROM users WHERE lower(email) = lower(?) AND active = 1')
+    .get(email) as Record<string, unknown> | undefined
+  if (!r) return null
+  const hash = r.password_hash as string | null
+  if (!hash) return null
+  if (hash !== hashPassword(plain)) return null
+  return rowToUser(r)
+}
+
 export function listUsers(): UserRow[] {
   return (db.prepare('SELECT * FROM users ORDER BY id').all() as Array<Record<string, unknown>>).map(
     rowToUser,
@@ -844,4 +856,299 @@ export function setShopTokens(
   if (tokens.shopCipher) merged.shopCipher = tokens.shopCipher
   db.prepare('UPDATE shops SET credentials = ? WHERE id = ?').run(encryptJson(merged), id)
   return getShop(id)
+}
+
+// ---- API-fetched data persistence ----
+// Two tables: daily_data (one row per shop/platform/day) and snapshot_data
+// (aggregated results per shop/platform/type/period). Both survive BFF restarts,
+// allowing historical analysis and offline operation when external APIs are down.
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS daily_data (
+    shop_id    INTEGER NOT NULL,
+    platform   TEXT NOT NULL,
+    date       TEXT NOT NULL,
+    data       TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (shop_id, platform, date)
+  );
+  CREATE TABLE IF NOT EXISTS snapshot_data (
+    shop_id    INTEGER NOT NULL,
+    platform   TEXT NOT NULL,
+    type       TEXT NOT NULL,
+    period     TEXT NOT NULL,
+    data       TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (shop_id, platform, type, period)
+  );
+`)
+
+// Recent data (within 3 days, incl. today) refreshes every 2h; older data is
+// considered settled and kept permanently (never auto-staled by age).
+const RECENT_DAYS_MS = 3 * 24 * 60 * 60 * 1000
+const STALE_RECENT_MS = 2 * 60 * 60 * 1000
+
+function isDailyStale(dateStr: string, fetchedAt: string): boolean {
+  const recentCutoff = new Date(Date.now() - RECENT_DAYS_MS).toISOString().slice(0, 10)
+  if (dateStr < recentCutoff) return false // historical: settled, keep permanently
+  return Date.now() - new Date(fetchedAt).getTime() > STALE_RECENT_MS
+}
+
+/** Returns the set of dates in [start,end] that are fresh (present & not stale). */
+export function getFreshDailyDates(
+  shopId: number,
+  platform: string,
+  start: string,
+  end: string,
+): Set<string> {
+  const rows = db
+    .prepare(
+      'SELECT date, fetched_at FROM daily_data WHERE shop_id=? AND platform=? AND date>=? AND date<=?',
+    )
+    .all(shopId, platform, start, end) as Array<{ date: string; fetched_at: string }>
+  const fresh = new Set<string>()
+  for (const r of rows) {
+    if (!isDailyStale(r.date, r.fetched_at)) fresh.add(r.date)
+  }
+  return fresh
+}
+
+/** Load all fresh cached daily rows for [start, end] as a date→row map. */
+export function loadDailyRows<T>(
+  shopId: number,
+  platform: string,
+  start: string,
+  end: string,
+): Map<string, T> {
+  const rows = db
+    .prepare(
+      'SELECT date, data, fetched_at FROM daily_data WHERE shop_id=? AND platform=? AND date>=? AND date<=?',
+    )
+    .all(shopId, platform, start, end) as Array<{
+    date: string
+    data: string
+    fetched_at: string
+  }>
+  const result = new Map<string, T>()
+  for (const r of rows) {
+    if (!isDailyStale(r.date, r.fetched_at)) result.set(r.date, JSON.parse(r.data) as T)
+  }
+  return result
+}
+
+/** Upsert a batch of normalized daily rows (each must have a `date` field). */
+export function saveDailyRows(
+  shopId: number,
+  platform: string,
+  rows: Array<{ date: string } & Record<string, unknown>>,
+): void {
+  if (rows.length === 0) return
+  const now = new Date().toISOString()
+  const stmt = db.prepare(`
+    INSERT INTO daily_data (shop_id, platform, date, data, fetched_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(shop_id, platform, date)
+    DO UPDATE SET data=excluded.data, fetched_at=excluded.fetched_at
+  `)
+  const tx = db.transaction(() => {
+    for (const row of rows) stmt.run(shopId, platform, row.date, JSON.stringify(row), now)
+  })
+  tx()
+}
+
+/** Load a cached snapshot, or null if missing or older than ttlMs (default 2h). */
+export function loadSnapshot<T>(
+  shopId: number,
+  platform: string,
+  type: string,
+  period: string,
+  ttlMs = STALE_RECENT_MS,
+): T[] | null {
+  const r = db
+    .prepare(
+      'SELECT data, fetched_at FROM snapshot_data WHERE shop_id=? AND platform=? AND type=? AND period=?',
+    )
+    .get(shopId, platform, type, period) as { data: string; fetched_at: string } | undefined
+  if (!r) return null
+  if (Date.now() - new Date(r.fetched_at).getTime() > ttlMs) return null
+  return JSON.parse(r.data) as T[]
+}
+
+/** Upsert a snapshot (overwrites any existing entry for the same key). */
+export function saveSnapshot(
+  shopId: number,
+  platform: string,
+  type: string,
+  period: string,
+  data: unknown[],
+): void {
+  db
+    .prepare(`
+      INSERT INTO snapshot_data (shop_id, platform, type, period, data, fetched_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(shop_id, platform, type, period)
+      DO UPDATE SET data=excluded.data, fetched_at=excluded.fetched_at
+    `)
+    .run(shopId, platform, type, period, JSON.stringify(data), new Date().toISOString())
+}
+
+/** Row counts for each cache table (for the management endpoint). */
+export function getApiCacheStats(): {
+  daily: number
+  snapshots: number
+  dailyByPlatform: Record<string, number>
+} {
+  const daily = (db.prepare('SELECT COUNT(*) AS n FROM daily_data').get() as { n: number }).n
+  const snapshots = (
+    db.prepare('SELECT COUNT(*) AS n FROM snapshot_data').get() as { n: number }
+  ).n
+  const byPlat = db
+    .prepare('SELECT platform, COUNT(*) AS n FROM daily_data GROUP BY platform')
+    .all() as Array<{ platform: string; n: number }>
+  const dailyByPlatform: Record<string, number> = {}
+  for (const r of byPlat) dailyByPlatform[r.platform] = r.n
+  return { daily, snapshots, dailyByPlatform }
+}
+
+/** Delete all cached API data, optionally scoped to a single shop. */
+export function flushApiCache(shopId?: number): void {
+  if (shopId !== undefined) {
+    db.prepare('DELETE FROM daily_data WHERE shop_id=?').run(shopId)
+    db.prepare('DELETE FROM snapshot_data WHERE shop_id=?').run(shopId)
+  } else {
+    db.prepare('DELETE FROM daily_data').run()
+    db.prepare('DELETE FROM snapshot_data').run()
+  }
+}
+
+// ---- Raw orders (per-order storage, queryable by date range) ----
+// Stores every individual order as JSON. Shopee orders embed `_income: OrderIncome`
+// so fee breakdown is co-located. Indexed by create_date for fast range queries.
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS raw_orders (
+    shop_id     INTEGER NOT NULL,
+    platform    TEXT NOT NULL,
+    order_sn    TEXT NOT NULL,
+    create_date TEXT NOT NULL,
+    data        TEXT NOT NULL,
+    fetched_at  TEXT NOT NULL,
+    PRIMARY KEY (shop_id, platform, order_sn)
+  );
+  CREATE INDEX IF NOT EXISTS idx_raw_orders_date
+    ON raw_orders (shop_id, platform, create_date);
+`)
+
+/**
+ * Upsert a batch of raw orders. Each entry must supply `order_sn` (unique key),
+ * `create_time_secs` (unix epoch, used to derive create_date in UTC+7), and
+ * `data` (the full order object — for Shopee include `_income` embedded).
+ */
+export function saveRawOrders(
+  shopId: number,
+  platform: string,
+  orders: Array<{ order_sn: string; create_time_secs: number; data: unknown }>,
+): void {
+  if (orders.length === 0) return
+  const now = new Date().toISOString()
+  const stmt = db.prepare(`
+    INSERT INTO raw_orders (shop_id, platform, order_sn, create_date, data, fetched_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(shop_id, platform, order_sn)
+    DO UPDATE SET data=excluded.data, fetched_at=excluded.fetched_at
+  `)
+  const tx = db.transaction(() => {
+    for (const o of orders) {
+      // Convert unix seconds to YYYY-MM-DD in Asia/Ho_Chi_Minh (UTC+7).
+      const dateTz = new Date((o.create_time_secs + 7 * 3600) * 1000).toISOString().slice(0, 10)
+      stmt.run(shopId, platform, o.order_sn, dateTz, JSON.stringify(o.data), now)
+    }
+  })
+  tx()
+}
+
+/** Load all orders for a date range (create_date in [start, end]). */
+export function loadRawOrders<T>(
+  shopId: number,
+  platform: string,
+  start: string,
+  end: string,
+): T[] {
+  return (
+    db
+      .prepare(
+        'SELECT data FROM raw_orders WHERE shop_id=? AND platform=? AND create_date>=? AND create_date<=?',
+      )
+      .all(shopId, platform, start, end) as Array<{ data: string }>
+  ).map((r) => JSON.parse(r.data) as T)
+}
+
+// Pre-normalized recon orders written by the poller so route handlers serve
+// a single JSON blob instead of normalizing 20k+ rows on every request.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS recon_cache (
+    shop_id    INTEGER NOT NULL,
+    platform   TEXT NOT NULL,
+    data       TEXT NOT NULL,
+    saved_at   TEXT NOT NULL,
+    PRIMARY KEY (shop_id, platform)
+  )
+`)
+
+/** Replace the pre-normalized recon list for one shop. Called by the poller. */
+export function saveReconCache(shopId: number, platform: string, rows: unknown[]): void {
+  db.prepare(`
+    INSERT INTO recon_cache (shop_id, platform, data, saved_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(shop_id, platform) DO UPDATE SET data=excluded.data, saved_at=excluded.saved_at
+  `).run(shopId, platform, JSON.stringify(rows), new Date().toISOString())
+}
+
+/**
+ * One-time startup migration: copy existing recon snapshots into recon_cache so the
+ * cache is warm immediately after restart (no 20k-order normalization on first request).
+ * Skips shops that already have a recon_cache entry (idempotent).
+ */
+export function warmReconCacheFromSnapshots(): void {
+  const existing = (db.prepare('SELECT shop_id, platform FROM recon_cache').all() as Array<{ shop_id: number; platform: string }>)
+  const covered = new Set(existing.map((r) => `${r.shop_id}:${r.platform}`))
+
+  const snaps = db.prepare(`
+    SELECT shop_id, platform, data FROM snapshot_data
+    WHERE type='recon'
+    ORDER BY fetched_at DESC
+  `).all() as Array<{ shop_id: number; platform: string; data: string }>
+
+  const now = new Date().toISOString()
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO recon_cache (shop_id, platform, data, saved_at) VALUES (?, ?, ?, ?)
+  `)
+  const tx = db.transaction(() => {
+    const seen = new Set<string>()
+    for (const snap of snaps) {
+      const key = `${snap.shop_id}:${snap.platform}`
+      if (covered.has(key) || seen.has(key)) continue
+      seen.add(key)
+      stmt.run(snap.shop_id, snap.platform, snap.data, now)
+    }
+  })
+  tx()
+}
+
+/** Load pre-normalized recon for one shop, or null if not yet populated. */
+export function loadReconCache<T>(shopId: number, platform: string): T[] | null {
+  const row = db
+    .prepare('SELECT data FROM recon_cache WHERE shop_id=? AND platform=?')
+    .get(shopId, platform) as { data: string } | undefined
+  return row ? (JSON.parse(row.data) as T[]) : null
+}
+
+/** Count raw orders by platform (for cache stats). */
+export function getRawOrdersCount(): Record<string, number> {
+  const rows = db
+    .prepare('SELECT platform, COUNT(*) AS n FROM raw_orders GROUP BY platform')
+    .all() as Array<{ platform: string; n: number }>
+  const result: Record<string, number> = {}
+  for (const r of rows) result[r.platform] = r.n
+  return result
 }

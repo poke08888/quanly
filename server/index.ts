@@ -14,9 +14,11 @@ import 'dotenv/config'
 
 import {
   normalizeCreators,
+  normalizeDailyFromOrders,
   normalizeDailySeries,
   normalizeReconOrders as normalizeTiktokRecon,
   normalizeTopProducts as normalizeTiktokTopProducts,
+  normalizeTopProductsFromOrders as normalizeTiktokTopProductsFromOrders,
   offsetOf,
   type Catalog,
 } from './tiktok/normalize'
@@ -38,6 +40,7 @@ import type {
   OrderSearchEnvelope,
   ProductPerf as TiktokProductPerf,
   ReconOrder as TiktokReconOrder,
+  SearchedOrder,
   ShopProduct,
   ShopProductsEnvelope,
 } from './tiktok/types'
@@ -66,6 +69,19 @@ import {
   deleteShop as storeDeleteShop,
   recordShopTest as storeRecordShopTest,
   setShopTokens as storeSetShopTokens,
+  getFreshDailyDates,
+  loadDailyRows,
+  saveDailyRows,
+  loadSnapshot,
+  saveSnapshot,
+  getApiCacheStats,
+  flushApiCache,
+  saveRawOrders,
+  loadRawOrders,
+  getRawOrdersCount,
+  saveReconCache,
+  loadReconCache,
+  warmReconCacheFromSnapshots,
   type ShopRow,
 } from './store/db'
 import {
@@ -78,10 +94,13 @@ import {
 } from './shops'
 import { freshTokens, withFreshToken, exchangeTikTokCode } from './oauth'
 import { memo } from './cache'
+import { requireAuth, setSession, clearSession, getSessionUserId } from './session'
+import { checkLogin, getUser } from './store/db'
 
-/** Cache TTL for live per-shop fetches (dedupes the dashboard's parallel calls). */
-const SHOP_TTL = 120_000
+/** In-memory dedup TTL for per-shop DB reads (poller refreshes DB every 60s). */
+const SHOP_TTL = 30_000
 
+import { publicSign as shopeePublicSign } from './shopee/sign'
 import { normalizeCampaigns, normalizeDailySpend } from './tiktokbiz/normalize'
 import {
   fetchCampaignMeta,
@@ -105,7 +124,7 @@ import {
   normalizeReconOrders as normalizeShopeeRecon,
   normalizeTopProducts as normalizeShopeeTopProducts,
 } from './shopee/normalize'
-import { fetchOrdersAndEscrow, pingOrders, type ShopeeCreds } from './shopee/client'
+import { fetchOrdersAndEscrow, fetchOrdersOnly, pingOrders, type ShopeeCreds } from './shopee/client'
 import { fetchAdsCampaigns, fetchAdsDaily } from './shopee/adsClient'
 import type {
   AdsCampaignRow,
@@ -214,46 +233,32 @@ async function adSpendByDayForShop(
   start: string,
   end: string,
 ): Promise<Map<string, number>> {
+  if (shop.mode !== 'live') return new Map()
+  // Ads (TikTok API for Business) is OPTIONAL: if no creds or call fails, treat as 0.
+  const c = shop.credentials
+  if (!c.bizAccessToken || !c.advertiserId) return new Map()
   let rows: BizReportEnvelope['data']['list']
-  if (shop.mode === 'live') {
-    // Ads (TikTok API for Business) is OPTIONAL and a SEPARATE app: if this shop has
-    // no Ads creds, or the Ads call fails, treat ad spend as 0 rather than failing the
-    // whole daily-series (revenue must still show even without an Ads integration).
-    const c = shop.credentials
-    if (!c.bizAccessToken || !c.advertiserId) return new Map()
-    try {
-      rows = await fetchDailyReport(bizCredsFromShop(shop), start, end)
-    } catch (err) {
-      console.warn(`[shop ${shop.id} "${shop.name}" ads] bỏ qua chi phí ads: ${(err as Error).message}`)
-      return new Map()
-    }
-  } else {
-    rows = loadFixture<BizReportEnvelope>('biz_report_daily.json').data.list
+  try {
+    rows = await fetchDailyReport(bizCredsFromShop(shop), start, end)
+  } catch (err) {
+    console.warn(`[shop ${shop.id} "${shop.name}" ads] bỏ qua chi phí ads: ${(err as Error).message}`)
+    return new Map()
   }
   const spend = normalizeDailySpend(rows)
   return new Map(spend.map((s) => [s.date, s.adSpend]))
 }
 
-/** TikTok Ads campaigns for ONE shop (sample or live report + names), normalized. */
+/** TikTok Ads campaigns for ONE shop — reads ONLY from DB snapshot.
+ *  The poller saves this snapshot every 60s. Returns [] if not yet populated. */
 async function campaignsForShop(
   shop: ShopRow,
   start: string,
   end: string,
-  brand: string,
+  _brand: string,
 ): Promise<BizCampaign[]> {
-  let reportRows: BizReportEnvelope['data']['list']
-  let metaRows: BizCampaignRow[]
-  if (shop.mode === 'live') {
-    ;[reportRows, metaRows] = await Promise.all([
-      fetchCampaignReport(bizCredsFromShop(shop), start, end),
-      fetchCampaignMeta(bizCredsFromShop(shop)),
-    ])
-  } else {
-    reportRows = loadFixture<BizReportEnvelope>('biz_report_campaign.json').data.list
-    metaRows = loadFixture<BizCampaignEnvelope>('biz_campaign_get.json').data.list
-  }
-  const meta = new Map(metaRows.map((m) => [m.campaign_id, m]))
-  return normalizeCampaigns(reportRows, meta, brand)
+  if (shop.mode !== 'live') return []
+  const period = `${start}:${end}`
+  return loadSnapshot<BizCampaign>(shop.id, 'tiktok', 'campaigns', period) ?? []
 }
 
 /** TikTok Ads campaigns across a brand's shops, merged. */
@@ -279,37 +284,12 @@ async function dailySeriesForShopRaw(
   start: string,
   end: string,
 ): Promise<DailyRow[]> {
-  let analytics: AnalyticsEnvelope
-  let finance: FinanceEnvelope
-  if (shop.mode === 'live') {
-    // end is inclusive from the client's perspective; TikTok windows are often
-    // [ge, lt), so pass end+1 day as the exclusive bound.
-    const endExclusive = addDays(end, 1)
-    const liveCreds = credsFromShop(shop)
-    // Analytics is REQUIRED (revenue/GMV). Finance is OPTIONAL: if the app lacks the
-    // Finance scope (or it errors), show revenue with fees=0 rather than failing the
-    // whole series — so the dashboard works as soon as Analytics is granted.
-    ;[analytics, finance] = await Promise.all([
-      fetchAnalytics(liveCreds, start, endExclusive),
-      fetchFinanceStatements(liveCreds, start, endExclusive).catch((err) => {
-        console.warn(
-          `[shop ${shop.id} "${shop.name}" finance] bỏ qua phí (thiếu quyền Finance?): ${(err as Error).message}`,
-        )
-        return { code: 0, message: 'skipped', data: { statements: [] } } as FinanceEnvelope
-      }),
-    ])
-  } else {
-    analytics = loadFixture<AnalyticsEnvelope>('analytics_shop_performance.json')
-    finance = loadFixture<FinanceEnvelope>('finance_statements.json')
-  }
-  // Fetch per-day ad spend and inject it as DailyRow.ads (profit recomputed in
-  // the normalizer so the P&L identity holds). Days with no spend -> 0.
-  const adsByDay = await adSpendByDayForShop(shop, start, shop.mode === 'live' ? addDays(end, 1) : end)
-  // "today" anchors the off (days-ago) field; use the end of the requested window.
-  const today = new Date(end + 'T00:00:00Z')
-  const rows = normalizeDailySeries(analytics, finance, today, adsByDay)
-  // Clamp to the requested [start, end] window.
-  return rows.filter((r) => r.date >= start && r.date <= end)
+  if (shop.mode !== 'live') return []
+
+  // Live mode: read ONLY from DB — poller (60s) is the sole data source.
+  const allDates = datesBetween(start, end)
+  const cached = loadDailyRows<DailyRow>(shop.id, 'tiktok', start, end)
+  return allDates.map((d) => cached.get(d)).filter(Boolean) as DailyRow[]
 }
 
 /** Daily series across a brand's TikTok shops, merged day-by-day. */
@@ -347,35 +327,23 @@ async function shopeeAdSpendByDayForShop(
   start: string,
   end: string,
 ): Promise<Map<string, number>> {
-  let rows: AdsDailyRow[]
-  if (shop.mode === 'live') {
-    rows = await fetchAdsDaily(shopeeCredsFromShop(shop), start, end)
-  } else {
-    rows = loadFixture<{ response: { daily_performance_list: AdsDailyRow[] } }>(
-      'shopee_ads_daily.json',
-    ).response.daily_performance_list
-  }
+  if (shop.mode !== 'live') return new Map()
+  const rows = await fetchAdsDaily(shopeeCredsFromShop(shop), start, end)
   const spend = normalizeShopeeDailySpend(rows)
   return new Map(spend.map((s) => [s.date, s.adSpend]))
 }
 
-/** Shopee CPC ad campaigns for ONE shop (sample or live), normalized. */
+/** Shopee CPC ad campaigns for ONE shop — reads ONLY from DB snapshot.
+ *  The poller saves this snapshot every 60s. Returns [] if not yet populated. */
 async function shopeeCampaignsForShop(
   shop: ShopRow,
   start: string,
   end: string,
-  brand: string,
+  _brand: string,
 ): Promise<ShopeeCampaign[]> {
-  let rows: AdsCampaignRow[]
-  if (shop.mode === 'live') {
-    // TODO enumerate campaign ids (get_product_campaign_setting_info / internal list).
-    rows = await fetchAdsCampaigns(shopeeCredsFromShop(shop), start, end, [])
-  } else {
-    rows = loadFixture<{ response: { campaign_list: AdsCampaignRow[] } }>(
-      'shopee_ads_campaign.json',
-    ).response.campaign_list
-  }
-  return normalizeShopeeCampaigns(rows, brand)
+  if (shop.mode !== 'live') return []
+  const period = `${start}:${end}`
+  return loadSnapshot<ShopeeCampaign>(shop.id, 'shopee', 'campaigns', period) ?? []
 }
 
 /** Shopee CPC ad campaigns across a brand's shops, merged. */
@@ -391,28 +359,12 @@ async function shopeeDailySeriesForShop(
   start: string,
   end: string,
 ): Promise<ShopeeDailyRow[]> {
-  let orders: OrderDetail[]
-  let escrow: Map<string, OrderIncome>
-  if (shop.mode === 'live') {
-    // Window [start 00:00, end+1 00:00) in local seconds.
-    const timeFrom = localDayStartSec(start)
-    const timeTo = localDayStartSec(addDays(end, 1))
-    const pulled = await fetchOrdersAndEscrow(shopeeCredsFromShop(shop), timeFrom, timeTo)
-    orders = pulled.orders
-    escrow = pulled.escrow
-  } else {
-    orders = loadFixture<OrderDetailResponse>('shopee_order_detail.json').response.order_list
-    const rawEscrow = loadFixture<{ orders: { order_sn: string; order_income: OrderIncome }[] }>(
-      'shopee_escrow.json',
-    )
-    escrow = new Map(rawEscrow.orders.map((e) => [e.order_sn, e.order_income]))
-  }
-  // Inject per-day CPC ad spend as DailyRow.ads (profit recomputed -> residual 0).
-  const adsByDay = await shopeeAdSpendByDayForShop(shop, start, end)
-  const today = new Date(end + 'T00:00:00Z')
-  const rows = normalizeShopeeDailySeries(orders, escrow, today, adsByDay)
-  // Clamp to the requested [start, end] window.
-  return rows.filter((r) => r.date >= start && r.date <= end)
+  if (shop.mode !== 'live') return []
+
+  // Live mode: read ONLY from DB — poller (60s) is the sole data source.
+  const allDates = datesBetween(start, end)
+  const cached = loadDailyRows<ShopeeDailyRow>(shop.id, 'shopee', start, end)
+  return allDates.map((d) => cached.get(d)).filter(Boolean) as ShopeeDailyRow[]
 }
 
 /** Shopee daily series across a brand's shops, merged day-by-day. */
@@ -422,20 +374,17 @@ async function shopeeDailySeries(start: string, end: string, brand: string): Pro
   return mergeDailyRows(per)
 }
 
-/** TikTok affiliate creators for ONE shop (sample or live), normalized. */
+/** TikTok affiliate creators for ONE shop — reads ONLY from DB snapshot.
+ *  The poller saves this snapshot every 60s. Returns [] if not yet populated. */
 async function tiktokCreatorsForShop(
   shop: ShopRow,
   start: string,
   end: string,
-  brand: string,
+  _brand: string,
 ): Promise<Creator[]> {
-  let orders: AffiliateOrder[]
-  if (shop.mode === 'live') {
-    orders = await fetchAffiliateOrders(credsFromShop(shop), start, addDays(end, 1))
-  } else {
-    orders = loadFixture<AffiliateOrdersEnvelope>('affiliate_orders.json').data.orders
-  }
-  return normalizeCreators(orders, brand)
+  if (shop.mode !== 'live') return []
+  const period = `${start}:${end}`
+  return loadSnapshot<Creator>(shop.id, 'tiktok', 'creators', period) ?? []
 }
 
 /** TikTok affiliate creators across a brand's shops, merged. */
@@ -452,15 +401,22 @@ async function tiktokTopProductsForShop(
   end: string,
   brand: string,
 ): Promise<TiktokProductPerf[]> {
-  let products: ShopProduct[]
-  if (shop.mode === 'live') {
-    products = await fetchShopProducts(credsFromShop(shop), start, addDays(end, 1))
-  } else {
-    products = loadFixture<ShopProductsEnvelope>('tiktok_shop_products.json').data.products
+  if (shop.mode !== 'live') return []
+
+  // Read from DB only: poller (60s) maintains this snapshot from raw orders.
+  const period = `${start}:${end}`
+  const cached = loadSnapshot<TiktokProductPerf>(shop.id, 'tiktok', 'top_products', period, Number.MAX_SAFE_INTEGER)
+  if (cached) return brand === 'group' ? cached : cached.filter((r) => r.brand === brand)
+
+  // Fallback: compute from raw orders already in DB (no API call).
+  const orders = loadRawOrders<SearchedOrder>(shop.id, 'tiktok', start, end)
+  if (orders.length > 0) {
+    const dailyMap = loadDailyRows<DailyRow>(shop.id, 'tiktok', start, end)
+    const dailyArr = datesBetween(start, end).map((d) => dailyMap.get(d)).filter(Boolean) as DailyRow[]
+    const rows = normalizeTiktokTopProductsFromOrders(orders, buildCatalog(), netRatioOf(dailyArr))
+    return brand === 'group' ? rows : rows.filter((r) => r.brand === brand)
   }
-  const netRatio = netRatioOf(await dailySeriesForShop(shop, start, end))
-  const rows = normalizeTiktokTopProducts(products, buildCatalog(), netRatio)
-  return brand === 'group' ? rows : rows.filter((r) => r.brand === brand)
+  return []
 }
 
 /** TikTok top products across a brand's shops, merged by sku. */
@@ -474,26 +430,35 @@ async function tiktokTopProducts(
   return mergeTopProducts(per)
 }
 
-/** TikTok recon orders for ONE shop (sample or live), fees from finance normalization. */
+/** TikTok recon orders for ONE shop — reads ONLY from DB, never calls live API.
+ *  The poller (pollTikTokSnapshotsForShop, 60s) is the sole source that fetches
+ *  finance statements and saves the recon snapshot. If no snapshot yet, we build
+ *  from raw orders with empty finance (fees = 0, orders are still visible). */
 async function tiktokReconOrdersForShop(
   shop: ShopRow,
   brand: string,
 ): Promise<TiktokReconOrder[]> {
-  let search: OrderSearchEnvelope
-  let finance: FinanceEnvelope
-  let analytics: AnalyticsEnvelope
-  if (shop.mode === 'live') {
-    ;[search, finance, analytics] = await Promise.all([
-      fetchOrderSearch(credsFromShop(shop), '2026-06-19', '2026-07-03'), // TODO window from caller
-      fetchFinanceStatements(credsFromShop(shop), '2026-06-19', '2026-07-03'),
-      fetchAnalytics(credsFromShop(shop), '2026-06-19', '2026-07-03'),
-    ])
-  } else {
-    search = loadFixture<OrderSearchEnvelope>('tiktok_order_search.json')
-    finance = loadFixture<FinanceEnvelope>('finance_statements.json')
-    analytics = loadFixture<AnalyticsEnvelope>('analytics_shop_performance.json')
+  if (shop.mode !== 'live') return []
+
+  // Fast path: poller pre-normalizes and saves to recon_cache (1 row, instant read).
+  const cached = loadReconCache<TiktokReconOrder>(shop.id, 'tiktok')
+  if (cached && cached.length > 0) {
+    return brand === 'group' ? cached : cached.filter((r) => r.brand === brand)
   }
-  const rows = normalizeTiktokRecon(search, finance, buildCatalog(), analytics)
+
+  // Cold-start fallback (poller not yet run): normalize from raw_orders on-the-fly.
+  const end = new Date().toISOString().slice(0, 10)
+  const start = addDays(end, -59)
+  const dbOrders = loadRawOrders<SearchedOrder>(shop.id, 'tiktok', start, end)
+  if (dbOrders.length === 0) return []
+
+  const emptyFinance: FinanceEnvelope = { code: 0, message: 'ok', data: { statements: [] } }
+  const rows = normalizeTiktokRecon(
+    { code: 0, message: 'ok', data: { orders: dbOrders } } as OrderSearchEnvelope,
+    emptyFinance,
+    buildCatalog(),
+  )
+  saveReconCache(shop.id, 'tiktok', rows)
   return brand === 'group' ? rows : rows.filter((r) => r.brand === brand)
 }
 
@@ -504,24 +469,7 @@ async function tiktokReconOrders(brand: string): Promise<TiktokReconOrder[]> {
   return mergeRecon(per)
 }
 
-/** Shopee order details + escrow for ONE shop (sample fixtures or live). */
-async function shopeeOrdersAndEscrowForShop(
-  shop: ShopRow,
-  start: string,
-  end: string,
-): Promise<{ orders: OrderDetail[]; escrow: Map<string, OrderIncome> }> {
-  if (shop.mode === 'live') {
-    const timeFrom = localDayStartSec(start)
-    const timeTo = localDayStartSec(addDays(end, 1))
-    return fetchOrdersAndEscrow(shopeeCredsFromShop(shop), timeFrom, timeTo)
-  }
-  const orders = loadFixture<OrderDetailResponse>('shopee_order_detail.json').response.order_list
-  const rawEscrow = loadFixture<{ orders: { order_sn: string; order_income: OrderIncome }[] }>(
-    'shopee_escrow.json',
-  )
-  return { orders, escrow: new Map(rawEscrow.orders.map((e) => [e.order_sn, e.order_income])) }
-}
-
+/** Shopee order details + escrow for ONE shop (live only). */
 /** Shopee top products for ONE shop (sample or live), margin via store cogs + net ratio. */
 async function shopeeTopProductsForShop(
   shop: ShopRow,
@@ -529,10 +477,23 @@ async function shopeeTopProductsForShop(
   end: string,
   brand: string,
 ): Promise<ShopeeProductPerf[]> {
-  const { orders } = await shopeeOrdersAndEscrowForShop(shop, start, end)
-  const netRatio = netRatioOf(await shopeeDailySeriesForShop(shop, start, end))
-  const rows = normalizeShopeeTopProducts(orders, buildCatalog() as ShopeeCatalog, netRatio)
-  return brand === 'group' ? rows : rows.filter((r) => r.brand === brand)
+  if (shop.mode !== 'live') return []
+
+  // Read from DB only: poller (60s) maintains snapshot from raw orders.
+  const period = `${start}:${end}`
+  const cached = loadSnapshot<ShopeeProductPerf>(shop.id, 'shopee', 'top_products', period, Number.MAX_SAFE_INTEGER)
+  if (cached) return brand === 'group' ? cached : cached.filter((r) => r.brand === brand)
+
+  // Fallback: compute from raw orders in DB (no API call).
+  type SpOrderWithIncome = OrderDetail & { _income?: OrderIncome }
+  const rawOrders = loadRawOrders<SpOrderWithIncome>(shop.id, 'shopee', start, end)
+  if (rawOrders.length > 0) {
+    const dailyMap = loadDailyRows<ShopeeDailyRow>(shop.id, 'shopee', start, end)
+    const dailyArr = datesBetween(start, end).map((d) => dailyMap.get(d)).filter(Boolean) as ShopeeDailyRow[]
+    const rows = normalizeShopeeTopProducts(rawOrders as OrderDetail[], buildCatalog() as ShopeeCatalog, netRatioOf(dailyArr))
+    return brand === 'group' ? rows : rows.filter((r) => r.brand === brand)
+  }
+  return []
 }
 
 /** Shopee top products across a brand's shops, merged by sku. */
@@ -546,13 +507,36 @@ async function shopeeTopProducts(
   return mergeTopProducts(per)
 }
 
-/** Shopee recon orders for ONE shop (sample or live), fees from escrow normalization. */
+/** Shopee recon orders for ONE shop (live only).
+ *  Reads ALL raw orders from DB (full 30-day window) so the orders page shows
+ *  every order, not just the settled ones that have escrow data. Fees are shown
+ *  for settled orders (escrow embedded by the recon poller); pending orders show
+ *  GMV with fees = 0, isSettled = false. */
 async function shopeeReconOrdersForShop(
   shop: ShopRow,
   brand: string,
 ): Promise<ShopeeReconOrder[]> {
-  const { orders, escrow } = await shopeeOrdersAndEscrowForShop(shop, '2026-06-19', '2026-07-02')
-  const rows = normalizeShopeeRecon(orders, escrow, buildCatalog() as ShopeeCatalog)
+  if (shop.mode !== 'live') return []
+
+  // Fast path: poller pre-normalizes and saves to recon_cache (1 row, instant read).
+  const cached = loadReconCache<ShopeeReconOrder>(shop.id, 'shopee')
+  if (cached && cached.length > 0) {
+    return brand === 'group' ? cached : cached.filter((r) => r.brand === brand)
+  }
+
+  // Cold-start fallback (poller not yet run): normalize from raw_orders on-the-fly.
+  const end = new Date().toISOString().slice(0, 10)
+  const start = addDays(end, -59)
+  type SpOrderWithIncome = OrderDetail & { _income?: OrderIncome }
+  const rawOrders = loadRawOrders<SpOrderWithIncome>(shop.id, 'shopee', start, end)
+  if (rawOrders.length === 0) return []
+
+  const escrowMap = new Map<string, OrderIncome>()
+  for (const o of rawOrders) {
+    if (o._income) escrowMap.set(o.order_sn, o._income)
+  }
+  const rows = normalizeShopeeRecon(rawOrders as OrderDetail[], escrowMap, buildCatalog() as ShopeeCatalog)
+  saveReconCache(shop.id, 'shopee', rows)
   return brand === 'group' ? rows : rows.filter((r) => r.brand === brand)
 }
 
@@ -560,13 +544,218 @@ async function shopeeReconOrdersForShop(
 async function shopeeReconOrders(brand: string): Promise<ShopeeReconOrder[]> {
   const shops = await freshShops('shopee', brand)
   const per = await fetchPerShop(shops, (s) => shopeeReconOrdersForShop(s, brand))
-  return mergeRecon(per, 60)
+  return mergeRecon(per)
+}
+
+// ============================================================
+// BACKGROUND POLLER — API → SQLite → Dashboard (60s interval)
+// Dashboard functions above read ONLY from DB; this section is
+// the only code that ever calls TikTok / Shopee APIs in live mode.
+// ============================================================
+
+const POLL_INTERVAL_MS = 60_000
+
+/** Fetch TikTok daily series from API and persist to daily_data table. */
+async function pollTikTokDailyForShop(shop: ShopRow, start: string, end: string): Promise<void> {
+  const endExclusive = addDays(end, 1)
+  const liveCreds = credsFromShop(shop)
+  // analytics/202405/shop/performance consistently 504s — skip it in the daily poller
+  // and derive daily rows from orders + finance instead (normalizeDailyFromOrders).
+  const [finance, orderEnvelope] = await Promise.all([
+    fetchFinanceStatements(liveCreds, start, endExclusive).catch((err) => {
+      console.warn(`[poller] shop ${shop.id} finance: ${(err as Error).message}`)
+      return { code: 0, message: 'skipped', data: { statements: [] } } as FinanceEnvelope
+    }),
+    fetchOrderSearch(liveCreds, start, end).catch((err) => {
+      console.warn(`[poller] shop ${shop.id} orders: ${(err as Error).message}`)
+      return { code: 0, message: 'skipped', data: { orders: [] } } as OrderSearchEnvelope
+    }),
+  ])
+  const adsByDay = await adSpendByDayForShop(shop, start, endExclusive)
+  const today = new Date(end + 'T00:00:00Z')
+  const rows = normalizeDailyFromOrders(
+    orderEnvelope.data.orders ?? [],
+    finance,
+    today,
+    adsByDay,
+  ).filter((r) => r.date >= start && r.date <= end)
+  saveDailyRows(shop.id, 'tiktok', rows as Array<{ date: string } & Record<string, unknown>>)
+  saveRawOrders(
+    shop.id, 'tiktok',
+    (orderEnvelope.data.orders ?? []).map((o) => ({
+      order_sn: o.id,
+      create_time_secs: o.create_time ?? 0,
+      data: o,
+    })),
+  )
+}
+
+/** Fetch Shopee daily series from API and persist to daily_data table. */
+async function pollShopeeDailyForShop(shop: ShopRow, start: string, end: string): Promise<void> {
+  // Skip escrow (per-order API calls) in the daily poll — too slow for large windows.
+  // Escrow is fetched separately in pollShopeeSnapshotsForShop for the recon period.
+  const timeFrom = localDayStartSec(start)
+  const timeTo = localDayStartSec(addDays(end, 1))
+  const orders = await fetchOrdersOnly(shopeeCredsFromShop(shop), timeFrom, timeTo)
+  const adsByDay = await shopeeAdSpendByDayForShop(shop, start, end)
+  const today = new Date(end + 'T00:00:00Z')
+  const rows = normalizeShopeeDailySeries(orders, new Map(), today, adsByDay).filter(
+    (r) => r.date >= start && r.date <= end,
+  )
+  saveDailyRows(shop.id, 'shopee', rows as Array<{ date: string } & Record<string, unknown>>)
+  saveRawOrders(
+    shop.id, 'shopee',
+    orders.map((o) => ({
+      order_sn: o.order_sn,
+      create_time_secs: o.create_time ?? 0,
+      data: o,  // no _income yet; recon snapshot adds escrow separately
+    })),
+  )
+}
+
+/** Fetch TikTok snapshot data (campaigns, creators, products, recon) and persist. */
+async function pollTikTokSnapshotsForShop(shop: ShopRow, start: string, end: string): Promise<void> {
+  const period = `${start}:${end}`
+  const brand = shop.brandKey
+
+  if (shop.credentials.bizAccessToken && shop.credentials.advertiserId) {
+    try {
+      const [reportRows, metaRows] = await Promise.all([
+        fetchCampaignReport(bizCredsFromShop(shop), start, end),
+        fetchCampaignMeta(bizCredsFromShop(shop)),
+      ])
+      const meta = new Map(metaRows.map((m) => [m.campaign_id, m]))
+      saveSnapshot(shop.id, 'tiktok', 'campaigns', period, normalizeCampaigns(reportRows, meta, brand))
+    } catch (err) {
+      console.warn(`[poller] TK campaigns shop ${shop.id}: ${(err as Error).message}`)
+    }
+  }
+
+  try {
+    // Affiliate seller orders API path is not publicly documented — skip gracefully.
+    const orders = await fetchAffiliateOrders(credsFromShop(shop), start, addDays(end, 1))
+    saveSnapshot(shop.id, 'tiktok', 'creators', period, normalizeCreators(orders, brand))
+  } catch (err) {
+    // 404 = affiliate orders endpoint not available for this app scope; non-fatal.
+    const msg = (err as Error).message
+    if (!msg.includes('HTTP 404')) console.warn(`[poller] TK creators shop ${shop.id}: ${msg}`)
+  }
+
+  // top_products and recon_cache are NOT rebuilt here — loading 20k raw orders
+  // synchronously (better-sqlite3) blocks the event loop for 15-30s on every poll.
+  // Instead: top_products route falls back to the requested period's raw orders (small),
+  // and recon_cache is warmed at startup from existing snapshots + saved by route on
+  // cold-start. The poller rebuilds recon_cache only after saving new raw orders (below).
+}
+
+/** Fetch Shopee snapshot data (campaigns, products, recon) and persist. */
+async function pollShopeeSnapshotsForShop(shop: ShopRow, start: string, end: string): Promise<void> {
+  const period = `${start}:${end}`
+  const brand = shop.brandKey
+
+  try {
+    const rows = await fetchAdsCampaigns(shopeeCredsFromShop(shop), start, end, [])
+    saveSnapshot(shop.id, 'shopee', 'campaigns', period, normalizeShopeeCampaigns(rows, brand))
+  } catch (err) {
+    console.warn(`[poller] SP campaigns shop ${shop.id}: ${(err as Error).message}`)
+  }
+
+  // top_products: NOT computed in poller (same event-loop-blocking reason as TikTok).
+  // Route falls back to requested-period raw orders (UI-typical periods = small, fast).
+
+  // Recon: 15-day window — fetch escrow fresh, embed into raw_orders.
+  const reconEnd = end
+  const reconStart = addDays(end, -14)
+  try {
+    const reconTimeFrom = localDayStartSec(reconStart)
+    const reconTimeTo = localDayStartSec(addDays(reconEnd, 1))
+    const { orders: reconOrders, escrow: reconEscrow } = await fetchOrdersAndEscrow(
+      shopeeCredsFromShop(shop), reconTimeFrom, reconTimeTo,
+    )
+    // Overwrite recent orders with escrow embedded so route reads _income from raw_orders.
+    saveRawOrders(shop.id, 'shopee', reconOrders.map((o) => ({
+      order_sn: o.order_sn,
+      create_time_secs: o.create_time ?? 0,
+      data: { ...o, _income: reconEscrow.get(o.order_sn) ?? null },
+    })))
+  } catch (err) {
+    console.warn(`[poller] SP recon shop ${shop.id}: ${(err as Error).message}`)
+  }
+
+  // recon_cache NOT rebuilt here — loading 7k raw orders synchronously blocks event loop.
+  // Cache is warmed at startup from snapshots; route saves to cache on cold-start visit.
+}
+
+/** One full polling cycle: fetch everything for all live shops, store in DB. */
+async function pollOnce(): Promise<void> {
+  const end = new Date().toISOString().slice(0, 10)
+  const start = addDays(end, -59) // last 60 days
+  let tktShops: ShopRow[] = []
+  let spShops: ShopRow[] = []
+  try {
+    ;[tktShops, spShops] = await Promise.all([
+      freshShops('tiktok', 'group').then((s) => s.filter((x) => x.mode === 'live')),
+      freshShops('shopee', 'group').then((s) => s.filter((x) => x.mode === 'live')),
+    ])
+  } catch (err) {
+    console.warn('[poller] cannot resolve shops:', (err as Error).message)
+    return
+  }
+  if (tktShops.length === 0 && spShops.length === 0) return
+
+  // Phase 1: daily data (must complete before snapshots that compute net ratio).
+  await Promise.all([
+    ...tktShops.map((s) =>
+      pollTikTokDailyForShop(s, start, end).catch((e) =>
+        console.warn(`[poller] TK daily shop ${s.id}: ${(e as Error).message}`),
+      ),
+    ),
+    ...spShops.map((s) =>
+      pollShopeeDailyForShop(s, start, end).catch((e) =>
+        console.warn(`[poller] SP daily shop ${s.id}: ${(e as Error).message}`),
+      ),
+    ),
+  ])
+
+  // Phase 2: snapshots (campaigns / creators / top-products / recon).
+  await Promise.all([
+    ...tktShops.map((s) =>
+      pollTikTokSnapshotsForShop(s, start, end).catch((e) =>
+        console.warn(`[poller] TK snapshots shop ${s.id}: ${(e as Error).message}`),
+      ),
+    ),
+    ...spShops.map((s) =>
+      pollShopeeSnapshotsForShop(s, start, end).catch((e) =>
+        console.warn(`[poller] SP snapshots shop ${s.id}: ${(e as Error).message}`),
+      ),
+    ),
+  ])
+  console.log(
+    `[poller] ✓ ${tktShops.length} TK + ${spShops.length} SP live shops — ${new Date().toISOString()}`,
+  )
+}
+
+/** Start the background poller: run immediately + every 60 seconds. */
+function startPoller(): void {
+  console.log('[poller] starting — 60s interval')
+  pollOnce().catch((err) => console.warn('[poller] initial poll failed:', err))
+  setInterval(() => pollOnce().catch((err) => console.warn('[poller] poll error:', err)), POLL_INTERVAL_MS)
 }
 
 function addDays(date: string, n: number): string {
   const d = new Date(date + 'T00:00:00Z')
   d.setUTCDate(d.getUTCDate() + n)
   return d.toISOString().slice(0, 10)
+}
+
+function datesBetween(start: string, end: string): string[] {
+  const dates: string[] = []
+  let cur = start
+  while (cur <= end) {
+    dates.push(cur)
+    cur = addDays(cur, 1)
+  }
+  return dates
 }
 
 // ---- TikTok Shop OAuth (seller authorization → tokens + shop_cipher) ----
@@ -633,7 +822,7 @@ async function testShopConnection(
 }
 
 const app = express()
-app.use(cors())
+app.use(cors({ origin: process.env.APP_ORIGIN || true, credentials: true }))
 app.use(express.json())
 
 app.get('/health', (_req, res) => {
@@ -642,6 +831,213 @@ app.get('/health', (_req, res) => {
   const live = shops.filter((s) => s.mode === 'live').length
   res.json({ ok: true, port: PORT, shops: shops.length, liveShops: live })
 })
+
+// ---- Authentication (no session required) ----
+
+/** Return the currently logged-in user object, or null if no session. */
+app.get('/api/auth/me', (req, res) => {
+  const id = getSessionUserId(req)
+  if (!id) { res.json(null); return }
+  const user = getUser(id)
+  res.json(user ?? null)
+})
+
+/** Login: validate email+password, issue a signed session cookie. */
+app.post('/api/auth/login', (req, res) => {
+  const { email, password } = (req.body as Record<string, unknown>) ?? {}
+  if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
+    res.status(400).json({ error: 'email và password là bắt buộc' })
+    return
+  }
+  const user = checkLogin(email, password)
+  if (!user) {
+    res.status(401).json({ error: 'Email hoặc mật khẩu không đúng' })
+    return
+  }
+  setSession(res, user.id)
+  res.json({ ok: true, user })
+})
+
+/** Logout: clear the session cookie. */
+app.post('/api/auth/logout', (_req, res) => {
+  clearSession(res)
+  res.json({ ok: true })
+})
+
+// OAuth callback: exchange auth_code -> tokens, discover shop_cipher, save to the shop.
+// Register <public-url>/api/tiktok/oauth/callback as the app's redirect URL in Partner Center.
+// MUST be before requireAuth — TikTok redirects here without a session cookie.
+app.get('/api/tiktok/oauth/callback', async (req, res) => {
+  const code = String(req.query.code ?? req.query.auth_code ?? '')
+  const state = String(req.query.state ?? '')
+  const entry = oauthStates.get(state)
+  oauthStates.delete(state)
+  if (!code) {
+    res.status(400).send(oauthResultPage(false, 'TikTok không trả về auth code.'))
+    return
+  }
+  if (!entry || entry.exp < Date.now()) {
+    res.status(400).send(oauthResultPage(false, 'Phiên kết nối hết hạn hoặc không hợp lệ. Thử lại.'))
+    return
+  }
+  const shop = storeGetShop(entry.shopId)
+  if (!shop || !shop.credentials.appKey || !shop.credentials.appSecret) {
+    res.status(400).send(oauthResultPage(false, 'Shop thiếu App Key/App Secret.'))
+    return
+  }
+  const c = shop.credentials
+  try {
+    const tok = await exchangeTikTokCode(c.appKey!, c.appSecret!, code)
+    let cipher: string | undefined
+    let shopName: string | undefined
+    try {
+      const shops = await fetchAuthorizedShops(
+        c.appKey!,
+        c.appSecret!,
+        tok.accessToken,
+        c.baseUrl || BASE_URL,
+      )
+      cipher = shops[0]?.cipher
+      shopName = shops[0]?.name
+    } catch (e) {
+      console.warn('[oauth] fetch authorized shops failed:', (e as Error).message)
+    }
+    storeSetShopTokens(entry.shopId, { ...tok, shopCipher: cipher })
+    res.send(
+      oauthResultPage(
+        true,
+        `Đã lấy access token + refresh token${shopName ? ` cho shop "${shopName}"` : ''}. ` +
+          (cipher ? 'Đã tự điền shop_cipher.' : 'Chưa lấy được shop_cipher — kiểm tra quyền Authorization của app.'),
+      ),
+    )
+  } catch (err) {
+    res.status(502).send(oauthResultPage(false, (err as Error).message))
+  }
+})
+
+// Shopee OAuth: start (redirect to Shopee consent page)
+app.get('/api/shopee/oauth/start', (req, res) => {
+  const shop = storeGetShop(Number(req.query.shopId))
+  if (!shop || shop.platform !== 'shopee') {
+    res.status(404).send(oauthResultPage(false, 'Shop Shopee không tồn tại.'))
+    return
+  }
+  const c = shop.credentials
+  if (!c.partnerId || !c.partnerKey) {
+    res.status(400).send(oauthResultPage(false, 'Shop chưa có Partner ID / Partner Key. Nhập và lưu trước.'))
+    return
+  }
+  const state = newOAuthState(shop.id)
+  const ts = Math.floor(Date.now() / 1000)
+  const AUTH_PATH = '/api/v2/shop/auth_partner'
+  const sign = shopeePublicSign(c.partnerId, c.partnerKey, AUTH_PATH, ts)
+  const origin = process.env.APP_ORIGIN || `${req.protocol}://${req.get('host')}`
+  const callback = `${origin}/api/shopee/oauth/callback`
+  const base = c.baseUrl || SHOPEE_BASE_URL
+  const params = new URLSearchParams({
+    partner_id: String(c.partnerId),
+    redirect: callback,
+    timestamp: String(ts),
+    state,
+    sign,
+  })
+  res.redirect(`${base}${AUTH_PATH}?${params.toString()}`)
+})
+
+// Shopee OAuth: callback — exchange code → access_token + refresh_token, persist.
+// MUST be before requireAuth — Shopee redirects here without a session cookie.
+// NOTE: Shopee does NOT pass state back in the callback URL (unlike TikTok),
+// so we fall back to finding any pending Shopee OAuth entry in oauthStates.
+app.get('/api/shopee/oauth/callback', async (req, res) => {
+  const code = String(req.query.code ?? '')
+  const shopIdFromCb = String(req.query.shop_id ?? '')
+  const state = String(req.query.state ?? '')
+
+  // Try exact state match first; if missing (Shopee omits it), scan for any pending Shopee shop.
+  let entry = oauthStates.get(state)
+  if (entry) {
+    oauthStates.delete(state)
+  } else {
+    for (const [s, e] of oauthStates) {
+      if (e.exp >= Date.now()) {
+        const sh = storeGetShop(e.shopId)
+        if (sh?.platform === 'shopee') {
+          entry = e
+          oauthStates.delete(s)
+          break
+        }
+      }
+    }
+  }
+
+  if (!code) {
+    res.status(400).send(oauthResultPage(false, 'Shopee không trả về auth code.'))
+    return
+  }
+  if (!entry || entry.exp < Date.now()) {
+    res.status(400).send(oauthResultPage(false, 'Phiên kết nối hết hạn hoặc không hợp lệ. Thử lại.'))
+    return
+  }
+  const shop = storeGetShop(entry.shopId)
+  if (!shop || !shop.credentials.partnerId || !shop.credentials.partnerKey) {
+    res.status(400).send(oauthResultPage(false, 'Shop thiếu Partner ID / Partner Key.'))
+    return
+  }
+  const c = shop.credentials
+  try {
+    const TOKEN_PATH = '/api/v2/auth/token/get'
+    const base = c.baseUrl || SHOPEE_BASE_URL
+    const ts = Math.floor(Date.now() / 1000)
+    const sign = shopeePublicSign(c.partnerId!, c.partnerKey!, TOKEN_PATH, ts)
+    const qs = new URLSearchParams({ partner_id: String(c.partnerId), timestamp: String(ts), sign })
+    const tokenRes = await fetch(`${base}${TOKEN_PATH}?${qs.toString()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, partner_id: Number(c.partnerId), shop_id: Number(shopIdFromCb) }),
+    })
+    const json = (await tokenRes.json()) as {
+      access_token?: string; refresh_token?: string; expire_in?: number
+      error?: string; message?: string
+    }
+    if (!tokenRes.ok || json.error) throw new Error(`Shopee token error ${json.error}: ${json.message}`)
+    if (!json.access_token) throw new Error('Shopee không trả về access_token.')
+    const expiresAt = json.expire_in ? Math.floor(Date.now() / 1000) + json.expire_in : undefined
+    storeSetShopTokens(entry.shopId, {
+      accessToken: json.access_token,
+      refreshToken: json.refresh_token,
+      tokenExpiresAt: expiresAt,
+      shopId: shopIdFromCb || undefined,
+    })
+    res.send(oauthResultPage(
+      true,
+      `Kết nối Shopee thành công! Shop ID: ${shopIdFromCb}.` +
+        (json.refresh_token ? ' Có refresh token — sẽ tự làm mới mỗi 4 giờ.' : ''),
+    ).replace('tiktok-oauth-done', 'shopee-oauth-done'))
+  } catch (err) {
+    res.status(502).send(oauthResultPage(false, (err as Error).message))
+  }
+})
+
+// All /api/* routes below require a valid session
+app.use('/api/', requireAuth)
+
+// ---- Cache management (protected) ----
+
+app.get('/api/cache/stats', (_req, res) => {
+  res.json({ ...getApiCacheStats(), rawOrders: getRawOrdersCount() })
+})
+
+app.delete('/api/cache/flush', (req, res) => {
+  const shopId = req.query.shopId !== undefined ? Number(req.query.shopId) : undefined
+  if (shopId !== undefined && isNaN(shopId)) {
+    res.status(400).json({ error: 'shopId must be a number' })
+    return
+  }
+  flushApiCache(shopId)
+  res.json({ ok: true, flushed: shopId !== undefined ? `shop ${shopId}` : 'all' })
+})
+
+// ---- Data routes (protected) ----
 
 app.get('/api/tiktok/daily-series', async (req, res) => {
   const start = String(req.query.start ?? '')
@@ -751,7 +1147,7 @@ app.get('/api/tiktok/top-products', async (req, res) => {
 app.get('/api/tiktok/recon-orders', async (req, res) => {
   const brand = String(req.query.brand ?? 'group')
   try {
-    res.json(await tiktokReconOrders(brand))
+    res.json(await memo(`tk-recon:${brand}`, 55_000, () => tiktokReconOrders(brand)))
   } catch (err) {
     console.error(`[tiktok recon-orders]`, err)
     res.status(502).json({ error: (err as Error).message })
@@ -777,7 +1173,7 @@ app.get('/api/shopee/top-products', async (req, res) => {
 app.get('/api/shopee/recon-orders', async (req, res) => {
   const brand = String(req.query.brand ?? 'group')
   try {
-    res.json(await shopeeReconOrders(brand))
+    res.json(await memo(`sp-recon:${brand}`, 55_000, () => shopeeReconOrders(brand)))
   } catch (err) {
     console.error(`[shopee recon-orders]`, err)
     res.status(502).json({ error: (err as Error).message })
@@ -1102,56 +1498,6 @@ app.post('/api/shops/:id/oauth/exchange', async (req, res) => {
   }
 })
 
-// OAuth callback: exchange auth_code -> tokens, discover shop_cipher, save to the shop.
-// Register <public-url>/api/tiktok/oauth/callback as the app's redirect URL in Partner Center.
-app.get('/api/tiktok/oauth/callback', async (req, res) => {
-  const code = String(req.query.code ?? req.query.auth_code ?? '')
-  const state = String(req.query.state ?? '')
-  const entry = oauthStates.get(state)
-  oauthStates.delete(state)
-  if (!code) {
-    res.status(400).send(oauthResultPage(false, 'TikTok không trả về auth code.'))
-    return
-  }
-  if (!entry || entry.exp < Date.now()) {
-    res.status(400).send(oauthResultPage(false, 'Phiên kết nối hết hạn hoặc không hợp lệ. Thử lại.'))
-    return
-  }
-  const shop = storeGetShop(entry.shopId)
-  if (!shop || !shop.credentials.appKey || !shop.credentials.appSecret) {
-    res.status(400).send(oauthResultPage(false, 'Shop thiếu App Key/App Secret.'))
-    return
-  }
-  const c = shop.credentials
-  try {
-    const tok = await exchangeTikTokCode(c.appKey!, c.appSecret!, code)
-    let cipher: string | undefined
-    let shopName: string | undefined
-    try {
-      const shops = await fetchAuthorizedShops(
-        c.appKey!,
-        c.appSecret!,
-        tok.accessToken,
-        c.baseUrl || BASE_URL,
-      )
-      cipher = shops[0]?.cipher
-      shopName = shops[0]?.name
-    } catch (e) {
-      console.warn('[oauth] fetch authorized shops failed:', (e as Error).message)
-    }
-    storeSetShopTokens(entry.shopId, { ...tok, shopCipher: cipher })
-    res.send(
-      oauthResultPage(
-        true,
-        `Đã lấy access token + refresh token${shopName ? ` cho shop "${shopName}"` : ''}. ` +
-          (cipher ? 'Đã tự điền shop_cipher.' : 'Chưa lấy được shop_cipher — kiểm tra quyền Authorization của app.'),
-      ),
-    )
-  } catch (err) {
-    res.status(502).send(oauthResultPage(false, (err as Error).message))
-  }
-})
-
 app.listen(PORT, () => {
   const shops = storeListShopsMasked()
   const live = shops.filter((s) => s.mode === 'live').length
@@ -1159,6 +1505,9 @@ app.listen(PORT, () => {
     `BFF listening on :${PORT} (${storeListBrands().length} brands, ${shops.length} shops, ` +
       `${live} live; shop=${BASE_URL}, biz=${BIZ_BASE_URL}, shopeeApi=${SHOPEE_BASE_URL})`,
   )
+  // Warm recon_cache from existing snapshots so cold-start never blocks event loop.
+  warmReconCacheFromSnapshots()
+  if (live > 0) startPoller()
 })
 
 // exported for a quick sanity import / testing without booting the server.

@@ -140,10 +140,5 @@ export interface SeedShop {
   mode: ShopMode
 }
 
-// Seed ONE sample shop per platform under 'nonelab' only, so `api` mode renders out
-// of the box WITHOUT multiplying the sample fixtures across every brand (brand=group
-// sums all shops). Other brands start empty — users attach their real shops.
-export const SEED_SHOPS: SeedShop[] = [
-  { brandKey: 'nonelab', platform: 'tiktok', name: 'Nonelab TikTok (demo)', mode: 'sample' },
-  { brandKey: 'nonelab', platform: 'shopee', name: 'Nonelab Shopee (demo)', mode: 'sample' },
-]
+// No demo shops seeded — users add their real shops via the admin screen.
+export const SEED_SHOPS: SeedShop[] = []

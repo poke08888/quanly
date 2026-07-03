@@ -113,10 +113,8 @@ export function mergeTopProducts<T extends { sku: string; gmv: number; qty: numb
   return merged.sort((a, b) => b.gmv - a.gmv)
 }
 
-/** Concatenate per-shop recon orders, most recent first, capped for a usable table. */
-export function mergeRecon<T extends { date: string }>(parts: T[][], cap = 120): T[] {
-  return parts
-    .flat()
-    .sort((a, b) => (a.date < b.date ? 1 : -1))
-    .slice(0, cap)
+/** Concatenate per-shop recon orders, most recent first. Omit cap for no limit. */
+export function mergeRecon<T extends { date: string }>(parts: T[][], cap = Infinity): T[] {
+  const sorted = parts.flat().sort((a, b) => (a.date < b.date ? 1 : -1))
+  return Number.isFinite(cap) ? sorted.slice(0, cap) : sorted
 }

@@ -39,6 +39,7 @@ async function get<T>(creds: ShopeeCreds, path: string, extra: Record<string, st
   const res = await fetch(buildUrl(creds, path, extra), {
     method: 'GET',
     headers: { 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(20_000),
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
@@ -49,9 +50,9 @@ async function get<T>(creds: ShopeeCreds, path: string, extra: Record<string, st
   return json
 }
 
-/** Max 15-day window per Shopee; chunk [from,to] (unix seconds) into ≤15-day spans. */
+/** Shopee order list allows at most 15 days per call — use 14 to stay safely under. */
 function chunkWindows(from: number, to: number): [number, number][] {
-  const span = 15 * 86_400
+  const span = 14 * 86_400
   const out: [number, number][] = []
   let s = from
   while (s < to) {
@@ -100,13 +101,21 @@ async function fetchOrderDetails(creds: ShopeeCreds, sns: string[]): Promise<Ord
   return out
 }
 
-/** Fetch escrow (order_income) per order_sn. */
+/** Fetch escrow (order_income) per order_sn — parallel batches of 8 concurrent. */
 async function fetchEscrow(creds: ShopeeCreds, sns: string[]): Promise<Map<string, OrderIncome>> {
   const map = new Map<string, OrderIncome>()
-  for (const sn of sns) {
-    // TODO consider get_escrow_detail_batch if enabled for the account.
-    const env = await get<EscrowDetailResponse>(creds, ESCROW_PATH, { order_sn: sn })
-    if (env.order_income) map.set(env.order_sn ?? sn, env.order_income)
+  const CONCURRENCY = 8
+  for (let i = 0; i < sns.length; i += CONCURRENCY) {
+    const batch = sns.slice(i, i + CONCURRENCY)
+    const results = await Promise.allSettled(
+      batch.map((sn) => get<EscrowDetailResponse>(creds, ESCROW_PATH, { order_sn: sn }))
+    )
+    for (let j = 0; j < results.length; j++) {
+      const r = results[j]
+      if (r.status === 'fulfilled' && r.value.order_income) {
+        map.set(r.value.order_sn ?? batch[j], r.value.order_income)
+      }
+    }
   }
   return map
 }
@@ -129,7 +138,17 @@ export async function pingOrders(
   })
 }
 
-/** Full live pull: order_sns -> details + escrow. timeFrom/timeTo are unix seconds. */
+/** Orders only (no escrow) — fast, for daily data accumulation. */
+export async function fetchOrdersOnly(
+  creds: ShopeeCreds,
+  timeFrom: number,
+  timeTo: number,
+): Promise<OrderDetail[]> {
+  const sns = await listOrderSns(creds, timeFrom, timeTo)
+  return fetchOrderDetails(creds, sns)
+}
+
+/** Full live pull: order_sns -> details + escrow. Use for recon (shorter window). */
 export async function fetchOrdersAndEscrow(
   creds: ShopeeCreds,
   timeFrom: number,

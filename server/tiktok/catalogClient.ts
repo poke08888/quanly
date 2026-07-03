@@ -88,29 +88,43 @@ async function postSigned<T>(
   })
 }
 
+/** TikTok order search allows large result sets — chunk into 7-day windows to avoid
+ *  hitting the 10,000-result (100 pages × 100) guard per call. sort_type must be
+ *  numeric: 1=ASC, 2=DESC. */
 export async function fetchOrderSearch(
   creds: TikTokCreds,
   start: string,
   end: string,
 ): Promise<OrderSearchEnvelope> {
-  // Order search is POST: time window (unix seconds) goes in the JSON body; paging in query.
-  const geSec = Math.floor(Date.parse(start + 'T00:00:00Z') / 1000) - 7 * 3600
-  const ltSec = Math.floor(Date.parse(end + 'T00:00:00Z') / 1000) - 7 * 3600
+  const CHUNK_DAYS = 7
   const all: SearchedOrder[] = []
-  let pageToken: string | undefined
-  let guard = 0
+
+  // Build 7-day windows covering [start, end].
+  const chunks: [number, number][] = []
+  let s = Math.floor(Date.parse(start + 'T00:00:00Z') / 1000) - 7 * 3600
+  const endSec = Math.floor(Date.parse(end + 'T00:00:00Z') / 1000) - 7 * 3600
+  while (s < endSec) {
+    const e = Math.min(s + CHUNK_DAYS * 86_400, endSec)
+    chunks.push([s, e])
+    s = e
+  }
+
   let last: OrderSearchEnvelope | undefined
-  do {
-    const env = await postSigned<OrderSearchEnvelope>(
-      creds,
-      ORDER_SEARCH_PATH,
-      { page_size: 50, page_token: pageToken, sort_field: 'create_time' },
-      { create_time_ge: geSec, create_time_lt: ltSec },
-    )
-    last = env
-    all.push(...(env.data?.orders ?? []))
-    pageToken = env.data?.next_page_token || undefined
-    guard++
-  } while (pageToken && guard < 100)
+  for (const [geSec, ltSec] of chunks) {
+    let pageToken: string | undefined
+    let guard = 0
+    do {
+      const env = await postSigned<OrderSearchEnvelope>(
+        creds,
+        ORDER_SEARCH_PATH,
+        { page_size: 100, page_token: pageToken, sort_field: 'create_time', sort_type: 2 },
+        { create_time_ge: geSec, create_time_lt: ltSec },
+      )
+      last = env
+      all.push(...(env.data?.orders ?? []))
+      pageToken = env.data?.next_page_token || undefined
+      guard++
+    } while (pageToken && guard < 100)
+  }
   return { code: last?.code ?? 0, message: last?.message ?? 'ok', data: { orders: all } }
 }

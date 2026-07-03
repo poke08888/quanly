@@ -48,27 +48,10 @@ function blankFees(): Fees {
  */
 export function normalizeFees(st: FinanceStatement): Fees {
   const fees = blankFees()
-  const pick = (...candidates: string[]): number => {
-    for (const c of candidates) {
-      const v = (st as Record<string, unknown>)[c]
-      if (v != null && v !== '') return Math.abs(num(v))
-    }
-    return 0
-  }
-
-  // TODO confirm field name: platform commission fee.
-  fees.commission_fee = pick('commission_fee', 'platform_commission', 'commission_amount')
-  // TODO confirm field name: payment / transaction processing fee.
-  fees.payment_fee = pick('payment_fee', 'transaction_fee', 'payment_processing_fee')
-  // TODO confirm field name: SFP / value-added service fee.
-  fees.service_fee = pick('service_fee', 'sfp_service_fee', 'fbt_fulfillment_fee')
-  // TODO confirm field name: seller-funded voucher / discount borne by seller.
-  fees.seller_voucher = pick('seller_voucher', 'seller_discount', 'voucher_seller')
-  // TODO confirm field name: shipping cost borne by the seller (net of buyer/platform subsidy).
-  fees.shipping_borne = pick('shipping_fee_seller', 'actual_shipping_fee', 'shipping_cost')
-  // TODO confirm field name: affiliate / creator commission (KOC).
-  fees.affiliate_comm = pick('affiliate_commission', 'affiliate_partner_commission', 'creator_commission')
-
+  const s = st as Record<string, unknown>
+  // TikTok Finance Statements API returns a single `fee_amount` (negative = deducted from seller).
+  // No per-type breakdown is available at statement level; we record the total as commission_fee.
+  fees.commission_fee = Math.abs(num(s.fee_amount ?? 0))
   return fees
 }
 
@@ -196,6 +179,71 @@ export function normalizeDailySeries(
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
 }
 
+/**
+ * Build DailyRow[] from raw orders when analytics is unavailable (e.g. 504 timeout).
+ * GMV is summed from order payment amounts grouped by creation day (UTC+7).
+ * impressions/clicks/cancelled/returned default to 0 (not available from order search).
+ */
+export function normalizeDailyFromOrders(
+  orders: SearchedOrder[],
+  finance: FinanceEnvelope,
+  today: Date = new Date(),
+  adsByDay: Map<string, number> = new Map(),
+): DailyRow[] {
+  const byDay = new Map<string, { gmv: number; count: number }>()
+  for (const o of orders) {
+    const sec = o.create_time ?? 0
+    if (!sec) continue
+    // Convert Unix seconds to YYYY-MM-DD in UTC+7 (Vietnam)
+    const d = new Date((sec + 7 * 3600) * 1000).toISOString().slice(0, 10)
+    const amt = num(o.payment?.total_amount ?? o.total_amount ?? 0)
+    const prev = byDay.get(d) ?? { gmv: 0, count: 0 }
+    byDay.set(d, { gmv: prev.gmv + amt, count: prev.count + 1 })
+  }
+  // Period-level fee rate: TikTok settles on a cycle (T+7 or bi-weekly), so
+  // statement_time doesn't align with order create_time. Sum ALL statement fees
+  // and distribute proportionally to each day's share of total GMV.
+  const periodFees = blankFees()
+  for (const st of finance?.data?.statements ?? []) {
+    const f = normalizeFees(st)
+    FEE_KEYS.forEach((k) => (periodFees[k] += f[k]))
+  }
+  const totalGmv = [...byDay.values()].reduce((s, { gmv }) => s + gmv, 0) || 1
+  return [...byDay.entries()]
+    .map(([date, { gmv, count }]) => {
+      const dayFees = blankFees()
+      FEE_KEYS.forEach((k) => (dayFees[k] = (periodFees[k] / totalGmv) * gmv))
+      const ads = adsByDay.get(date) ?? 0
+      const gmvNet0 = gmv
+      const netRevenue =
+        gmvNet0 -
+        dayFees.commission_fee -
+        dayFees.payment_fee -
+        dayFees.service_fee -
+        dayFees.seller_voucher -
+        dayFees.shipping_borne
+      return {
+        date,
+        off: offsetOf(date, today),
+        gmv,
+        orders: count,
+        gmvNet0,
+        netRevenue,
+        ads,
+        cogs: 0,
+        kocBooking: 0,
+        profit: netRevenue - ads - dayFees.affiliate_comm,
+        impressions: 0,
+        clicks: 0,
+        cancelled: 0,
+        returned: 0,
+        fees: dayFees,
+        sources: { live: 0, video: 0, card: 0, search: 0 },
+      } as DailyRow
+    })
+    .sort((a, b) => (a.date < b.date ? -1 : 1))
+}
+
 /** Follower count -> tier label (best-effort; TODO confirm thresholds). */
 function tierOf(followers: number): string {
   if (followers >= 500_000) return 'Macro'
@@ -300,6 +348,53 @@ export function normalizeTopProducts(
     .sort((a, b) => b.gmv - a.gmv)
 }
 
+/**
+ * Compute top products directly from order search results — groups line_items
+ * by seller_sku, sums GMV and quantity. Preferred over the product-performance
+ * API because order data is already stored in raw_orders (no extra API call).
+ */
+export function normalizeTopProductsFromOrders(
+  orders: SearchedOrder[],
+  catalog: Catalog,
+  netRatio: number,
+): ProductPerf[] {
+  interface Agg { sku: string; name?: string; gmv: number; qty: number }
+  const bySku = new Map<string, Agg>()
+  for (const o of orders) {
+    for (const li of o.line_items ?? []) {
+      const sku = String(li.seller_sku ?? li.sku_id ?? '')
+      if (!sku) continue
+      const qty = num(li.quantity) || 1
+      const unitPrice = num(li.sale_price) || num(li.original_price) || 0
+      const gmv = unitPrice * qty
+      const a = bySku.get(sku) ?? { sku, name: li.product_name, gmv: 0, qty: 0 }
+      a.gmv += gmv
+      a.qty += qty
+      if (!a.name && li.product_name) a.name = li.product_name
+      bySku.set(sku, a)
+    }
+  }
+  const total = [...bySku.values()].reduce((s, a) => s + a.gmv, 0) || 1
+  return [...bySku.values()]
+    .map((a) => {
+      const cat = catalog.get(a.sku)
+      const unitCost = cat?.unitCost ?? 0
+      const marginPct = a.gmv ? (a.gmv * netRatio - a.qty * unitCost) / a.gmv : 0
+      return {
+        sku: a.sku,
+        brand: cat?.brand ?? 'nonelab',
+        name: a.name ?? cat?.name ?? a.sku,
+        cost: unitCost,
+        price: cat?.price ?? 0,
+        gmv: a.gmv,
+        qty: a.qty,
+        marginPct,
+        share: a.gmv / total,
+      }
+    })
+    .sort((a, b) => b.gmv - a.gmv)
+}
+
 /** Order status values that count as settled. TODO confirm enum. */
 function ttSettled(status: string): boolean {
   return /SETTLED|COMPLETED|DELIVERED/i.test(status)
@@ -316,34 +411,33 @@ export function normalizeReconOrders(
   search: OrderSearchEnvelope,
   finance: FinanceEnvelope,
   catalog: Catalog,
-  analytics?: AnalyticsEnvelope,
+  _analytics?: AnalyticsEnvelope,
 ): ReconOrder[] {
   const orders = search?.data?.orders ?? []
-  const feesPerDay = feesByDay(finance)
-  // Day gmv from analytics (whole-shop) so the fee rate has the right denominator.
-  const gmvPerDay = new Map<string, number>()
-  for (const iv of analytics?.data?.performance?.intervals ?? []) {
-    gmvPerDay.set(iv.start_date, num(iv.gmv?.amount))
+  // Period-level fee rate: settlement dates ≠ order creation dates, so per-day
+  // matching produces wrong rates. Sum ALL statement fees and apply uniformly.
+  const periodFees = blankFees()
+  for (const st of finance?.data?.statements ?? []) {
+    const f = normalizeFees(st)
+    FEE_KEYS.forEach((k) => (periodFees[k] += f[k]))
   }
-  const orderDay = (o: SearchedOrder) =>
-    o.create_time ? new Date(o.create_time * 1000).toISOString().slice(0, 10) : ''
   const orderGmv = (o: SearchedOrder) =>
     num(o.payment?.total_amount) || num(o.total_amount) ||
     (o.line_items ?? []).reduce((s, li) => s + num(li.sale_price) * (num(li.quantity) || 1), 0)
+  const periodGmv = orders.reduce((s, o) => s + orderGmv(o), 0) || 1
 
   return orders
     .map((o) => {
-      const day = orderDay(o)
+      const day = o.create_time
+        ? new Date((o.create_time + 7 * 3600) * 1000).toISOString().slice(0, 10)
+        : ''
       const gmv = orderGmv(o)
       const li = (o.line_items ?? [])[0]
       const sku = String(li?.seller_sku ?? li?.sku_id ?? '')
       const cat = catalog.get(sku)
       const qty = (o.line_items ?? []).reduce((s, x) => s + (num(x.quantity) || 1), 0) || 1
-      // Fee rate for the day (pool / day gmv), applied to this order's gmv.
-      const dayGmv = gmvPerDay.get(day) || 0
-      const pool = feesPerDay.get(day) ?? blankFees()
-      const fees = {} as Fees
-      FEE_KEYS.forEach((k) => (fees[k] = dayGmv ? (pool[k] / dayGmv) * gmv : 0))
+      const fees = blankFees()
+      FEE_KEYS.forEach((k) => (fees[k] = (periodFees[k] / periodGmv) * gmv))
       const net = gmv - FEE_KEYS.reduce((s, k) => s + fees[k], 0)
       return {
         id: o.id,
