@@ -531,6 +531,10 @@ async function shopeeReconOrders(brand: string): Promise<ShopeeReconOrder[]> {
 // ============================================================
 
 const POLL_INTERVAL_MS = 60_000
+/** Quick cycle window: only the last N days re-fetch every minute (older data is settled). */
+const QUICK_DAYS = 3
+/** Full 60-day sweep cadence — matches STALE_RECENT_MS (2h) used by the DB read TTLs. */
+const FULL_SWEEP_MS = 2 * 60 * 60 * 1000
 
 /** Fetch TikTok daily series from API and persist to daily_data table. */
 async function pollTikTokDailyForShop(shop: ShopRow, start: string, end: string): Promise<void> {
@@ -666,10 +670,16 @@ async function pollShopeeSnapshotsForShop(shop: ShopRow, start: string, end: str
   // Cache is warmed at startup from snapshots; route saves to cache on cold-start visit.
 }
 
-/** One full polling cycle: fetch everything for all live shops, store in DB. */
-async function pollOnce(): Promise<void> {
+/**
+ * One polling cycle. `full=false` (every 60s): re-fetch only the last QUICK_DAYS of
+ * daily data — cheap, keeps today's numbers near-realtime. `full=true` (every 2h +
+ * at boot): 60-day daily sweep AND the snapshots phase (campaigns / creators / Shopee
+ * recon escrow) — those all sit behind 2h read-TTLs anyway, so polling them every
+ * minute was pure waste (~95% of the API calls).
+ */
+async function pollOnce(full: boolean): Promise<void> {
   const end = vnToday()
-  const start = addDays(end, -59) // last 60 days
+  const start = addDays(end, full ? -59 : -(QUICK_DAYS - 1))
   let tktShops: ShopRow[] = []
   let spShops: ShopRow[] = []
   try {
@@ -697,29 +707,49 @@ async function pollOnce(): Promise<void> {
     ),
   ])
 
-  // Phase 2: snapshots (campaigns / creators / top-products / recon).
-  await Promise.all([
-    ...tktShops.map((s) =>
-      pollTikTokSnapshotsForShop(s, start, end).catch((e) =>
-        console.warn(`[poller] TK snapshots shop ${s.id}: ${(e as Error).message}`),
+  // Phase 2 (full sweeps only): snapshots — campaigns / creators / Shopee recon escrow.
+  if (full) {
+    await Promise.all([
+      ...tktShops.map((s) =>
+        pollTikTokSnapshotsForShop(s, start, end).catch((e) =>
+          console.warn(`[poller] TK snapshots shop ${s.id}: ${(e as Error).message}`),
+        ),
       ),
-    ),
-    ...spShops.map((s) =>
-      pollShopeeSnapshotsForShop(s, start, end).catch((e) =>
-        console.warn(`[poller] SP snapshots shop ${s.id}: ${(e as Error).message}`),
+      ...spShops.map((s) =>
+        pollShopeeSnapshotsForShop(s, start, end).catch((e) =>
+          console.warn(`[poller] SP snapshots shop ${s.id}: ${(e as Error).message}`),
+        ),
       ),
-    ),
-  ])
+    ])
+  }
   console.log(
-    `[poller] ✓ ${tktShops.length} TK + ${spShops.length} SP live shops — ${new Date().toISOString()}`,
+    `[poller] ✓ ${full ? 'full-60d' : `quick-${QUICK_DAYS}d`} — ${tktShops.length} TK + ${spShops.length} SP live shops — ${new Date().toISOString()}`,
   )
 }
 
-/** Start the background poller: run immediately + every 60 seconds. */
+// Overlap guard: setInterval fires every 60s regardless of how long a cycle takes; a
+// full sweep can run for minutes, and overlapping sweeps used to pile up concurrent
+// API calls (self-inflicted rate-limiting). One cycle at a time; extra ticks skip.
+let pollBusy = false
+let lastFullSweepAt = 0
+
+async function pollTick(): Promise<void> {
+  if (pollBusy) return
+  pollBusy = true
+  try {
+    const full = Date.now() - lastFullSweepAt >= FULL_SWEEP_MS
+    await pollOnce(full)
+    if (full) lastFullSweepAt = Date.now()
+  } finally {
+    pollBusy = false
+  }
+}
+
+/** Start the background poller: full sweep at boot, then quick/full ticks every 60s. */
 function startPoller(): void {
-  console.log('[poller] starting — 60s interval')
-  pollOnce().catch((err) => console.warn('[poller] initial poll failed:', err))
-  setInterval(() => pollOnce().catch((err) => console.warn('[poller] poll error:', err)), POLL_INTERVAL_MS)
+  console.log(`[poller] starting — quick ${QUICK_DAYS}d mỗi 60s, full 60d mỗi 2h, chống chồng vòng`)
+  pollTick().catch((err) => console.warn('[poller] initial poll failed:', err))
+  setInterval(() => pollTick().catch((err) => console.warn('[poller] poll error:', err)), POLL_INTERVAL_MS)
 }
 
 function addDays(date: string, n: number): string {
