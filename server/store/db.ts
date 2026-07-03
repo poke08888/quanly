@@ -845,6 +845,7 @@ export function setShopTokens(
     refreshToken?: string
     tokenExpiresAt?: number
     shopCipher?: string
+    shopId?: string
   },
 ): ShopRow | undefined {
   const cur = getShop(id)
@@ -854,6 +855,7 @@ export function setShopTokens(
   if (tokens.refreshToken) merged.refreshToken = tokens.refreshToken
   if (tokens.tokenExpiresAt != null) merged.tokenExpiresAt = tokens.tokenExpiresAt
   if (tokens.shopCipher) merged.shopCipher = tokens.shopCipher
+  if (tokens.shopId) merged.shopId = tokens.shopId
   db.prepare('UPDATE shops SET credentials = ? WHERE id = ?').run(encryptJson(merged), id)
   return getShop(id)
 }

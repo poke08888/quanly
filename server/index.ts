@@ -4,10 +4,7 @@
 // already-normalized DailyRow[]/Campaign[] JSON. The browser never sees any
 // app_secret / partner_key. TikTok and Shopee have independent sample|live modes.
 
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import crypto from 'node:crypto'
-import path from 'node:path'
 import express from 'express'
 import cors from 'cors'
 import 'dotenv/config'
@@ -15,9 +12,7 @@ import 'dotenv/config'
 import {
   normalizeCreators,
   normalizeDailyFromOrders,
-  normalizeDailySeries,
   normalizeReconOrders as normalizeTiktokRecon,
-  normalizeTopProducts as normalizeTiktokTopProducts,
   normalizeTopProductsFromOrders as normalizeTiktokTopProductsFromOrders,
   offsetOf,
   type Catalog,
@@ -29,11 +24,8 @@ import {
   type TikTokCreds,
 } from './tiktok/client'
 import { fetchAffiliateOrders } from './tiktok/affiliateClient'
-import { fetchOrderSearch, fetchShopProducts } from './tiktok/catalogClient'
+import { fetchOrderSearch } from './tiktok/catalogClient'
 import type {
-  AffiliateOrder,
-  AffiliateOrdersEnvelope,
-  AnalyticsEnvelope,
   Creator,
   DailyRow,
   FinanceEnvelope,
@@ -41,8 +33,6 @@ import type {
   ProductPerf as TiktokProductPerf,
   ReconOrder as TiktokReconOrder,
   SearchedOrder,
-  ShopProduct,
-  ShopProductsEnvelope,
 } from './tiktok/types'
 
 import {
@@ -69,7 +59,6 @@ import {
   deleteShop as storeDeleteShop,
   recordShopTest as storeRecordShopTest,
   setShopTokens as storeSetShopTokens,
-  getFreshDailyDates,
   loadDailyRows,
   saveDailyRows,
   loadSnapshot,
@@ -109,8 +98,6 @@ import {
   type TikTokBizCreds,
 } from './tiktokbiz/client'
 import type {
-  BizCampaignEnvelope,
-  BizCampaignRow,
   BizReportEnvelope,
   Campaign as BizCampaign,
 } from './tiktokbiz/types'
@@ -127,29 +114,19 @@ import {
 import { fetchOrdersAndEscrow, fetchOrdersOnly, pingOrders, type ShopeeCreds } from './shopee/client'
 import { fetchAdsCampaigns, fetchAdsDaily } from './shopee/adsClient'
 import type {
-  AdsCampaignRow,
-  AdsDailyRow,
   Campaign as ShopeeCampaign,
   Catalog as ShopeeCatalog,
   DailyRow as ShopeeDailyRow,
   OrderDetail,
-  OrderDetailResponse,
   OrderIncome,
   ProductPerf as ShopeeProductPerf,
   ReconOrder as ShopeeReconOrder,
 } from './shopee/types'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const FIXTURES = path.join(__dirname, 'fixtures')
-
 const PORT = Number(process.env.PORT ?? 8790)
 const BASE_URL = process.env.TIKTOK_BASE_URL ?? 'https://open-api.tiktokglobalshop.com'
 const BIZ_BASE_URL = process.env.TIKTOK_BIZ_BASE_URL ?? 'https://business-api.tiktok.com'
 const SHOPEE_BASE_URL = process.env.SHOPEE_BASE_URL ?? 'https://partner.shopeemobile.com'
-
-function loadFixture<T>(file: string): T {
-  return JSON.parse(readFileSync(path.join(FIXTURES, file), 'utf-8')) as T
-}
 
 /** Build the sku -> {brand,name,price,unitCost} catalog from the cost store. */
 function buildCatalog(): Catalog {
@@ -579,7 +556,7 @@ async function pollTikTokDailyForShop(shop: ShopRow, start: string, end: string)
     today,
     adsByDay,
   ).filter((r) => r.date >= start && r.date <= end)
-  saveDailyRows(shop.id, 'tiktok', rows as Array<{ date: string } & Record<string, unknown>>)
+  saveDailyRows(shop.id, 'tiktok', rows as unknown as Array<{ date: string } & Record<string, unknown>>)
   saveRawOrders(
     shop.id, 'tiktok',
     (orderEnvelope.data.orders ?? []).map((o) => ({
@@ -602,7 +579,7 @@ async function pollShopeeDailyForShop(shop: ShopRow, start: string, end: string)
   const rows = normalizeShopeeDailySeries(orders, new Map(), today, adsByDay).filter(
     (r) => r.date >= start && r.date <= end,
   )
-  saveDailyRows(shop.id, 'shopee', rows as Array<{ date: string } & Record<string, unknown>>)
+  saveDailyRows(shop.id, 'shopee', rows as unknown as Array<{ date: string } & Record<string, unknown>>)
   saveRawOrders(
     shop.id, 'shopee',
     orders.map((o) => ({
