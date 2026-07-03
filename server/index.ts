@@ -424,7 +424,7 @@ async function tiktokReconOrdersForShop(
   }
 
   // Cold-start fallback (poller not yet run): normalize from raw_orders on-the-fly.
-  const end = new Date().toISOString().slice(0, 10)
+  const end = vnToday()
   const start = addDays(end, -59)
   const dbOrders = loadRawOrders<SearchedOrder>(shop.id, 'tiktok', start, end)
   if (dbOrders.length === 0) return []
@@ -502,7 +502,7 @@ async function shopeeReconOrdersForShop(
   }
 
   // Cold-start fallback (poller not yet run): normalize from raw_orders on-the-fly.
-  const end = new Date().toISOString().slice(0, 10)
+  const end = vnToday()
   const start = addDays(end, -59)
   type SpOrderWithIncome = OrderDetail & { _income?: OrderIncome }
   const rawOrders = loadRawOrders<SpOrderWithIncome>(shop.id, 'shopee', start, end)
@@ -543,7 +543,10 @@ async function pollTikTokDailyForShop(shop: ShopRow, start: string, end: string)
       console.warn(`[poller] shop ${shop.id} finance: ${(err as Error).message}`)
       return { code: 0, message: 'skipped', data: { statements: [] } } as FinanceEnvelope
     }),
-    fetchOrderSearch(liveCreds, start, end).catch((err) => {
+    // endExclusive here too: fetchOrderSearch's create_time_lt is the START of its end
+    // day, so passing `end` would permanently exclude today's orders (the bug that made
+    // TikTok lag a day behind Shopee).
+    fetchOrderSearch(liveCreds, start, endExclusive).catch((err) => {
       console.warn(`[poller] shop ${shop.id} orders: ${(err as Error).message}`)
       return { code: 0, message: 'skipped', data: { orders: [] } } as OrderSearchEnvelope
     }),
@@ -665,7 +668,7 @@ async function pollShopeeSnapshotsForShop(shop: ShopRow, start: string, end: str
 
 /** One full polling cycle: fetch everything for all live shops, store in DB. */
 async function pollOnce(): Promise<void> {
-  const end = new Date().toISOString().slice(0, 10)
+  const end = vnToday()
   const start = addDays(end, -59) // last 60 days
   let tktShops: ShopRow[] = []
   let spShops: ShopRow[] = []
@@ -725,6 +728,12 @@ function addDays(date: string, n: number): string {
   return d.toISOString().slice(0, 10)
 }
 
+/** Today's date in Asia/Ho_Chi_Minh (UTC+7). toISOString() alone is UTC: between
+ *  00:00–07:00 VN it still returns YESTERDAY's date, making the poller lag a day. */
+function vnToday(): string {
+  return new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10)
+}
+
 function datesBetween(start: string, end: string): string[] {
   const dates: string[] = []
   let cur = start
@@ -778,7 +787,7 @@ async function testShopConnection(
     }
   }
   // Real-clock 2-day window; for a connection probe the exact dates don't matter.
-  const end = new Date().toISOString().slice(0, 10)
+  const end = vnToday()
   const start = addDays(end, -2)
   try {
     if (shop.platform === 'tiktok') {
