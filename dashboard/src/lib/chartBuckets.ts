@@ -50,6 +50,8 @@ export interface HourlyPoint {
   gmv: number
   cost: number
   profit: number
+  /** true = estimated split for hours before tracking started that day. */
+  est?: boolean
 }
 
 export function buildChart(
@@ -62,9 +64,14 @@ export function buildChart(
 
   // REAL hourly data available (poller snapshots) → use it, no synthetic curve.
   if (gran === 'hour' && hourly && hourly.length > 0) {
+    const lastEst = hourly.reduce((m, h) => (h.est ? Math.max(m, h.hour) : m), -1)
+    const note =
+      lastEst >= 0
+        ? `${period.label || 'Kỳ đang chọn'} — theo giờ (0–${lastEst}h ước tính phân bổ, từ ${lastEst + 1}h dữ liệu thật)`
+        : `${period.label || 'Kỳ đang chọn'} — theo giờ (dữ liệu thật)`
     return {
       points: hourly.map((h) => ({ label: `${h.hour}h`, gmv: h.gmv, cost: h.cost, profit: h.profit })),
-      note: `${period.label || 'Kỳ đang chọn'} — theo giờ (dữ liệu thật)`,
+      note,
     }
   }
   // period rows, oldest → newest (off high → low)

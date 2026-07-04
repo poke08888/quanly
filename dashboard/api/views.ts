@@ -237,7 +237,13 @@ export interface HourPoint {
   gmv: number
   cost: number
   profit: number
+  /** true = estimated split (hours before tracking started that day), not a real delta. */
+  est?: boolean
 }
+
+// Same deterministic intraday curve as the chart's fallback — used ONLY to spread the
+// pre-tracking cumulative over the hours before the first snapshot of the day.
+const HOUR_WEIGHTS = [2, 1, 1, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 8, 7, 6, 7, 9, 11, 12, 10, 7, 5, 3]
 
 /** Total cost of a cumulative row: COGS + ads + KOC + 6 platform fees (mirror of chart's rowCost). */
 function cumCost(r: DailyRow): number {
@@ -273,25 +279,50 @@ export function hourlySeries(filter: PlatformFilter, brand: string, date: string
   }
   if (maxHour < 0) return []
 
-  const points: HourPoint[] = []
-  let prev: Cum = { gmv: 0, cost: 0, profit: 0 }
+  // First hour of the day that has ANY snapshot: everything accumulated before it has
+  // no hourly breakdown (tracking wasn't running yet that day — e.g. feature enabled
+  // mid-day, or poller downtime since midnight).
+  let firstHour = 24
+  for (const m of perShop) for (const h of m.keys()) if (h < firstHour) firstHour = h
+
+  // Summed cumulative per hour (per-shop forward-fill for gaps).
+  const cums: Cum[] = []
   const carry: Cum[] = perShop.map(() => ({ gmv: 0, cost: 0, profit: 0 }))
   for (let h = 0; h <= maxHour; h++) {
     const total: Cum = { gmv: 0, cost: 0, profit: 0 }
     perShop.forEach((m, i) => {
       const cur = m.get(h)
-      if (cur) carry[i] = cur // forward-fill gaps (poller down / hour skipped)
+      if (cur) carry[i] = cur
       total.gmv += carry[i].gmv
       total.cost += carry[i].cost
       total.profit += carry[i].profit
     })
+    cums.push(total)
+  }
+
+  const points: HourPoint[] = []
+  // Hours 0..firstHour: spread the first cumulative along the estimate curve instead of
+  // dumping it all into one spike at firstHour. Totals stay exact.
+  const c0 = cums[firstHour] ?? { gmv: 0, cost: 0, profit: 0 }
+  const wSum = HOUR_WEIGHTS.slice(0, firstHour + 1).reduce((a, b) => a + b, 0) || 1
+  for (let h = 0; h <= firstHour; h++) {
+    const f = HOUR_WEIGHTS[h] / wSum
     points.push({
       hour: h,
-      gmv: Math.max(0, total.gmv - prev.gmv),
-      cost: Math.max(0, total.cost - prev.cost),
-      profit: Math.max(0, total.profit - prev.profit),
+      gmv: c0.gmv * f,
+      cost: c0.cost * f,
+      profit: c0.profit * f,
+      est: firstHour > 0 ? true : undefined,
     })
-    prev = total
+  }
+  // After firstHour: REAL hour-over-hour deltas (clamped ≥0 — cancellations can dip).
+  for (let h = firstHour + 1; h <= maxHour; h++) {
+    points.push({
+      hour: h,
+      gmv: Math.max(0, cums[h].gmv - cums[h - 1].gmv),
+      cost: Math.max(0, cums[h].cost - cums[h - 1].cost),
+      profit: Math.max(0, cums[h].profit - cums[h - 1].profit),
+    })
   }
   return points
 }
