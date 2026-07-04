@@ -67,6 +67,7 @@ import {
   flushApiCache,
   saveRawOrders,
   loadRawOrders,
+  loadRawOrderIncomeMap,
   getRawOrdersCount,
   saveReconCache,
   loadReconCache,
@@ -305,9 +306,25 @@ async function shopeeAdSpendByDayForShop(
   end: string,
 ): Promise<Map<string, number>> {
   if (shop.mode !== 'live') return new Map()
-  const rows = await fetchAdsDaily(shopeeCredsFromShop(shop), start, end)
-  const spend = normalizeShopeeDailySpend(rows)
-  return new Map(spend.map((s) => [s.date, s.adSpend]))
+  // Ads spend is OPTIONAL for daily rows: a 429/limit error must NOT kill order saving
+  // (it used to abort the whole SP daily poll). Shopee also caps the range at 1 month,
+  // so chunk ≤28 days; memo 10' cuts the call rate (quick cycle would otherwise hit
+  // the ads API every 60s — the source of the earlier 429 storms).
+  return memo(`spads:${shop.id}:${start}:${end}`, 600_000, async () => {
+    const out = new Map<string, number>()
+    try {
+      let s = start
+      while (s <= end) {
+        const chunkEnd = addDays(s, 27) <= end ? addDays(s, 27) : end
+        const rows = await fetchAdsDaily(shopeeCredsFromShop(shop), s, chunkEnd)
+        for (const r of normalizeShopeeDailySpend(rows)) out.set(r.date, (out.get(r.date) ?? 0) + r.adSpend)
+        s = addDays(chunkEnd, 1)
+      }
+    } catch (err) {
+      console.warn(`[shop ${shop.id} "${shop.name}" sp-ads] bỏ qua chi phí ads: ${(err as Error).message}`)
+    }
+    return out
+  })
 }
 
 /** Shopee CPC ad campaigns for ONE shop — reads ONLY from DB snapshot.
@@ -600,12 +617,15 @@ async function pollShopeeDailyForShop(shop: ShopRow, start: string, end: string)
     (r) => r.date >= start && r.date <= end,
   )
   saveDailyRows(shop.id, 'shopee', rows as unknown as Array<{ date: string } & Record<string, unknown>>)
+  // PRESERVE previously-embedded escrow: this save used to write `data: o` (no _income),
+  // wiping the income the snapshots phase had attached — one reason fees stayed 0.
+  const incomeKeep = loadRawOrderIncomeMap(shop.id, start, end)
   saveRawOrders(
     shop.id, 'shopee',
     orders.map((o) => ({
       order_sn: o.order_sn,
       create_time_secs: o.create_time ?? 0,
-      data: o,  // no _income yet; recon snapshot adds escrow separately
+      data: { ...o, _income: incomeKeep.get(o.order_sn) ?? null },
     })),
   )
 }
@@ -666,14 +686,21 @@ async function pollShopeeSnapshotsForShop(shop: ShopRow, start: string, end: str
   try {
     const reconTimeFrom = localDayStartSec(reconStart)
     const reconTimeTo = localDayStartSec(addDays(reconEnd, 1))
-    const { orders: reconOrders, escrow: reconEscrow } = await fetchOrdersAndEscrow(
-      shopeeCredsFromShop(shop), reconTimeFrom, reconTimeTo,
+    // INCREMENTAL escrow: only fetch income for orders that don't have it yet
+    // (escrow = 1 API call per order; refetching thousands each sweep caused 429s).
+    const existingIncome = loadRawOrderIncomeMap(shop.id, reconStart, reconEnd)
+    const { orders: reconOrders, escrow: reconEscrow, escrowFailed } = await fetchOrdersAndEscrow(
+      shopeeCredsFromShop(shop), reconTimeFrom, reconTimeTo, new Set(existingIncome.keys()),
     )
-    // Overwrite recent orders with escrow embedded so route reads _income from raw_orders.
+    console.log(
+      `[poller] SP escrow shop ${shop.id}: +${reconEscrow.size} mới, ${existingIncome.size} đã có, ` +
+        `${escrowFailed} lỗi / ${reconOrders.length} đơn 15 ngày`,
+    )
+    // Embed income (new fetch first, else previously-stored) so routes read it from raw_orders.
     saveRawOrders(shop.id, 'shopee', reconOrders.map((o) => ({
       order_sn: o.order_sn,
       create_time_secs: o.create_time ?? 0,
-      data: { ...o, _income: reconEscrow.get(o.order_sn) ?? null },
+      data: { ...o, _income: reconEscrow.get(o.order_sn) ?? existingIncome.get(o.order_sn) ?? null },
     })))
   } catch (err) {
     console.warn(`[poller] SP recon shop ${shop.id}: ${(err as Error).message}`)

@@ -103,10 +103,12 @@ export interface OrderIncome {
   [key: string]: unknown
 }
 
-/** GET /api/v2/payment/get_escrow_detail (single order). */
+/** GET /api/v2/payment/get_escrow_detail (single order). Shopee v2 wraps the payload
+ *  in `response` (same as order list/detail); flat fields kept as defensive fallback. */
 export interface EscrowDetailResponse {
-  order_sn: string
-  order_income: OrderIncome
+  response?: { order_sn?: string; order_income?: OrderIncome }
+  order_sn?: string
+  order_income?: OrderIncome
 }
 
 // ---- Shopee ads module (metric names best-effort) ----

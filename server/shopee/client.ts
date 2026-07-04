@@ -101,10 +101,15 @@ async function fetchOrderDetails(creds: ShopeeCreds, sns: string[]): Promise<Ord
   return out
 }
 
-/** Fetch escrow (order_income) per order_sn — parallel batches of 8 concurrent. */
-async function fetchEscrow(creds: ShopeeCreds, sns: string[]): Promise<Map<string, OrderIncome>> {
+/** Fetch escrow (order_income) per order_sn — parallel batches (gentle: Shopee
+ *  rate-limits hard). Returns whatever succeeded; failures counted for the caller. */
+async function fetchEscrow(
+  creds: ShopeeCreds,
+  sns: string[],
+): Promise<{ map: Map<string, OrderIncome>; failed: number }> {
   const map = new Map<string, OrderIncome>()
-  const CONCURRENCY = 8
+  let failed = 0
+  const CONCURRENCY = 4
   for (let i = 0; i < sns.length; i += CONCURRENCY) {
     const batch = sns.slice(i, i + CONCURRENCY)
     const results = await Promise.allSettled(
@@ -112,12 +117,17 @@ async function fetchEscrow(creds: ShopeeCreds, sns: string[]): Promise<Map<strin
     )
     for (let j = 0; j < results.length; j++) {
       const r = results[j]
-      if (r.status === 'fulfilled' && r.value.order_income) {
-        map.set(r.value.order_sn ?? batch[j], r.value.order_income)
+      if (r.status !== 'fulfilled') {
+        failed++
+        continue
       }
+      // Shopee v2 wraps the payload in `response` — the old flat read matched nothing,
+      // which is why _income was never populated. Support both shapes defensively.
+      const body = (r.value.response ?? r.value) as { order_sn?: string; order_income?: OrderIncome }
+      if (body.order_income) map.set(body.order_sn ?? batch[j], body.order_income)
     }
   }
-  return map
+  return { map, failed }
 }
 
 /**
@@ -148,16 +158,20 @@ export async function fetchOrdersOnly(
   return fetchOrderDetails(creds, sns)
 }
 
-/** Full live pull: order_sns -> details + escrow. Use for recon (shorter window). */
+/** Full live pull: order_sns -> details + escrow. `skipEscrowSns` makes the escrow
+ *  part INCREMENTAL: orders whose income is already stored are not re-fetched
+ *  (escrow is 1 API call per order — refetching thousands each sweep = 429 storms). */
 export async function fetchOrdersAndEscrow(
   creds: ShopeeCreds,
   timeFrom: number,
   timeTo: number,
-): Promise<{ orders: OrderDetail[]; escrow: Map<string, OrderIncome> }> {
+  skipEscrowSns?: Set<string>,
+): Promise<{ orders: OrderDetail[]; escrow: Map<string, OrderIncome>; escrowFailed: number }> {
   const sns = await listOrderSns(creds, timeFrom, timeTo)
-  const [orders, escrow] = await Promise.all([
+  const need = skipEscrowSns ? sns.filter((sn) => !skipEscrowSns.has(sn)) : sns
+  const [orders, escrowRes] = await Promise.all([
     fetchOrderDetails(creds, sns),
-    fetchEscrow(creds, sns),
+    fetchEscrow(creds, need),
   ])
-  return { orders, escrow }
+  return { orders, escrow: escrowRes.map, escrowFailed: escrowRes.failed }
 }

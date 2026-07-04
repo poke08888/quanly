@@ -1085,6 +1085,34 @@ export function loadRawOrders<T>(
   ).map((r) => JSON.parse(r.data) as T)
 }
 
+/**
+ * order_sn -> _income for Shopee raw orders in [start,end] that ALREADY have escrow
+ * embedded. Used to (a) skip re-fetching escrow per order (incremental), and (b)
+ * preserve income when the daily poll re-saves orders without it.
+ */
+export function loadRawOrderIncomeMap(
+  shopId: number,
+  start: string,
+  end: string,
+): Map<string, unknown> {
+  const rows = db
+    .prepare(
+      "SELECT order_sn, json_extract(data,'$._income') AS inc FROM raw_orders " +
+        "WHERE shop_id=? AND platform='shopee' AND create_date>=? AND create_date<=? " +
+        "AND json_extract(data,'$._income') IS NOT NULL",
+    )
+    .all(shopId, start, end) as Array<{ order_sn: string; inc: string }>
+  const m = new Map<string, unknown>()
+  for (const r of rows) {
+    try {
+      m.set(r.order_sn, JSON.parse(r.inc))
+    } catch {
+      /* skip malformed row */
+    }
+  }
+  return m
+}
+
 // Pre-normalized recon orders written by the poller so route handlers serve
 // a single JSON blob instead of normalizing 20k+ rows on every request.
 db.exec(`
