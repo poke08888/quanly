@@ -42,18 +42,23 @@ async function get<T>(creds: ShopeeCreds, path: string, extra: Record<string, st
   return json
 }
 
-/** Shop-level daily CPC ads performance. start/end are YYYY-MM-DD. */
+/** Shop-level daily CPC ads performance. start/end are YYYY-MM-DD.
+ *  VERIFIED against the live API: `response` is a BARE ARRAY of daily rows
+ *  ({date: 'dd-mm-yyyy', expense, impression, clicks, broad_gmv, ...}) — the old
+ *  `response.daily_performance_list` read matched nothing, so ad spend was never
+ *  ingested despite HTTP 200s. Keep the object shape as a defensive fallback. */
 export async function fetchAdsDaily(
   creds: ShopeeCreds,
   start: string,
   end: string,
 ): Promise<AdsDailyRow[]> {
-  const env = await get<{ response: { daily_performance_list: AdsDailyRow[] } }>(
+  const env = await get<{ response: AdsDailyRow[] | { daily_performance_list?: AdsDailyRow[] } }>(
     creds,
     ADS_DAILY_PATH,
-    { start_date: ddmmyyyy(start), end_date: ddmmyyyy(end) }, // TODO confirm param names/format
+    { start_date: ddmmyyyy(start), end_date: ddmmyyyy(end) },
   )
-  return env.response?.daily_performance_list ?? []
+  const resp = env.response
+  return Array.isArray(resp) ? resp : resp?.daily_performance_list ?? []
 }
 
 /**
