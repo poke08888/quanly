@@ -114,8 +114,9 @@ import {
   normalizeTopProducts as normalizeShopeeTopProducts,
 } from './shopee/normalize'
 import { fetchOrdersAndEscrow, fetchOrdersOnly, pingOrders, type ShopeeCreds } from './shopee/client'
-import { fetchAdsCampaigns, fetchAdsDaily } from './shopee/adsClient'
+import { fetchAdsCampaigns, fetchAdsDaily, fetchCampaignIds, fetchCampaignNames } from './shopee/adsClient'
 import type {
+  AdsCampaignRow,
   Campaign as ShopeeCampaign,
   Catalog as ShopeeCatalog,
   DailyRow as ShopeeDailyRow,
@@ -674,8 +675,30 @@ async function pollShopeeSnapshotsForShop(shop: ShopRow, start: string, end: str
   const brand = shop.brandKey
 
   try {
-    const rows = await fetchAdsCampaigns(shopeeCredsFromShop(shop), start, end, [])
-    saveSnapshot(shop.id, 'shopee', 'campaigns', period, normalizeShopeeCampaigns(rows, brand))
+    const creds = shopeeCredsFromShop(shop)
+    // 1) Enumerate all product-level campaign ids (paginated).
+    const ids = await fetchCampaignIds(creds)
+    // 2) Daily performance, chunked ≤28 days (API caps the range at 1 month).
+    const rows: AdsCampaignRow[] = []
+    let s = start
+    while (s <= end) {
+      const chunkEnd = addDays(s, 27) <= end ? addDays(s, 27) : end
+      rows.push(...(await fetchAdsCampaigns(creds, s, chunkEnd, ids)))
+      s = addDays(chunkEnd, 1)
+    }
+    // 3) Names only for campaigns that actually spent in the window (keeps calls small
+    //    and the m3 table clean — old closed campaigns are all-zero rows).
+    const active = rows.filter((r) => Number(r.expense) > 0)
+    const activeIds = [...new Set(active.map((r) => String(r.campaign_id)))]
+    const names = await fetchCampaignNames(creds, activeIds)
+    const named = active.map((r) => ({
+      ...r,
+      campaign_name: names.get(String(r.campaign_id))?.name ?? r.campaign_name,
+    }))
+    saveSnapshot(shop.id, 'shopee', 'campaigns', period, normalizeShopeeCampaigns(named, brand))
+    console.log(
+      `[poller] SP campaigns shop ${shop.id}: ${activeIds.length} chiến dịch có chi tiêu / ${ids.length} tổng`,
+    )
   } catch (err) {
     console.warn(`[poller] SP campaigns shop ${shop.id}: ${(err as Error).message}`)
   }

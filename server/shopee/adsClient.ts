@@ -61,10 +61,55 @@ export async function fetchAdsDaily(
   return Array.isArray(resp) ? resp : resp?.daily_performance_list ?? []
 }
 
+const ADS_ID_LIST_PATH = '/api/v2/ads/get_product_level_campaign_id_list'
+const ADS_SETTING_PATH = '/api/v2/ads/get_product_level_campaign_setting_info'
+
+/** Enumerate ALL product-level campaign ids (paginated by offset; VERIFIED shape:
+ *  response.{has_next_page, campaign_list:[{ad_type, campaign_id}]}). */
+export async function fetchCampaignIds(creds: ShopeeCreds): Promise<string[]> {
+  const ids: string[] = []
+  const LIMIT = 100
+  for (let page = 0; page < 40; page++) {
+    const env = await get<{
+      response?: { has_next_page?: boolean; campaign_list?: Array<{ campaign_id?: number | string }> }
+    }>(creds, ADS_ID_LIST_PATH, { offset: String(page * LIMIT), limit: String(LIMIT) })
+    for (const c of env.response?.campaign_list ?? []) {
+      if (c.campaign_id != null) ids.push(String(c.campaign_id))
+    }
+    if (!env.response?.has_next_page) break
+  }
+  return ids
+}
+
+/** Campaign names + status (VERIFIED shape: response.campaign_list[].common_info.ad_name). */
+export async function fetchCampaignNames(
+  creds: ShopeeCreds,
+  campaignIds: string[],
+): Promise<Map<string, { name?: string; status?: string }>> {
+  const out = new Map<string, { name?: string; status?: string }>()
+  for (let i = 0; i < campaignIds.length; i += 100) {
+    const batch = campaignIds.slice(i, i + 100)
+    const env = await get<{
+      response?: {
+        campaign_list?: Array<{
+          campaign_id?: number | string
+          common_info?: { ad_name?: string; campaign_status?: string }
+        }>
+      }
+    }>(creds, ADS_SETTING_PATH, { info_type_list: '1', campaign_id_list: batch.join(',') })
+    for (const c of env.response?.campaign_list ?? []) {
+      if (c.campaign_id != null)
+        out.set(String(c.campaign_id), { name: c.common_info?.ad_name, status: c.common_info?.campaign_status })
+    }
+  }
+  return out
+}
+
 /**
- * Campaign-level CPC performance. Requires a campaign_id_list; the id source is
- * account-specific (get_product_campaign_setting_info or an internal list).
- * TODO confirm how to enumerate campaign ids + fetch names.
+ * Campaign-level CPC daily performance. VERIFIED shape: the payload is NESTED —
+ * response.campaign_list[] = { campaign_id, metrics_list:[{date, expense, ...}] } —
+ * so we flatten each metrics row tagged with its campaign_id. Batched ≤50 ids/call;
+ * callers should keep the date range ≤1 month (API limit).
  */
 export async function fetchAdsCampaigns(
   creds: ShopeeCreds,
@@ -73,14 +118,28 @@ export async function fetchAdsCampaigns(
   campaignIds: string[],
 ): Promise<AdsCampaignRow[]> {
   if (campaignIds.length === 0) return []
-  const env = await get<{ response: { campaign_list?: AdsCampaignRow[]; list?: AdsCampaignRow[] } }>(
-    creds,
-    ADS_CAMPAIGN_PATH,
-    {
+  const rows: AdsCampaignRow[] = []
+  for (let i = 0; i < campaignIds.length; i += 50) {
+    const batch = campaignIds.slice(i, i + 50)
+    const env = await get<{
+      response?: {
+        campaign_list?: Array<{
+          campaign_id?: number | string
+          metrics_list?: Array<Record<string, unknown>>
+        }>
+      }
+    }>(creds, ADS_CAMPAIGN_PATH, {
       start_date: ddmmyyyy(start),
       end_date: ddmmyyyy(end),
-      campaign_id_list: JSON.stringify(campaignIds.map((id) => Number(id))), // TODO confirm shape
-    },
-  )
-  return env.response?.campaign_list ?? env.response?.list ?? []
+      campaign_id_list: batch.join(','),
+    })
+    const list = env.response?.campaign_list ?? []
+    list.forEach((c, idx) => {
+      const id = c.campaign_id != null ? String(c.campaign_id) : batch[idx]
+      for (const m of c.metrics_list ?? []) {
+        rows.push({ ...(m as AdsCampaignRow), campaign_id: id })
+      }
+    })
+  }
+  return rows
 }
