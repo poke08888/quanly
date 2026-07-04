@@ -680,9 +680,10 @@ async function pollShopeeSnapshotsForShop(shop: ShopRow, start: string, end: str
   // top_products: NOT computed in poller (same event-loop-blocking reason as TikTok).
   // Route falls back to requested-period raw orders (UI-typical periods = small, fast).
 
-  // Recon: 15-day window — fetch escrow fresh, embed into raw_orders.
+  // Recon: cover the WHOLE sweep window (60d). The skip-set below makes escrow
+  // incremental — after the one-time backfill pass, only NEW orders cost an API call.
   const reconEnd = end
-  const reconStart = addDays(end, -14)
+  const reconStart = start
   try {
     const reconTimeFrom = localDayStartSec(reconStart)
     const reconTimeTo = localDayStartSec(addDays(reconEnd, 1))
