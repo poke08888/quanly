@@ -55,9 +55,16 @@ export function buildChart(rows: DailyRow[], period: Period): { points: ChartPoi
   let points: ChartPoint[]
 
   if (gran === 'hour') {
+    // There is NO hourly source data (daily_data is per-day): the curve is an ESTIMATED
+    // intraday distribution of the day's real total. For TODAY, only draw hours that
+    // have already happened (0h..now) — never fabricate future hours — and renormalize
+    // the weights over that slice so the drawn hours still sum to the real total-so-far.
     const day = inRange.find((r) => r.off === endOff) ?? inRange[inRange.length - 1] ?? rows[rows.length - 1]
-    const sumW = HOUR_WEIGHTS.reduce((a, b) => a + b, 0)
-    points = HOUR_WEIGHTS.map((w, h) => {
+    const isToday = endOff === 0
+    const lastHour = isToday ? new Date().getHours() : 23
+    const weights = HOUR_WEIGHTS.slice(0, lastHour + 1)
+    const sumW = weights.reduce((a, b) => a + b, 0) || 1
+    points = weights.map((w, h) => {
       const f = w / sumW
       return {
         label: `${h}h`,
@@ -66,6 +73,11 @@ export function buildChart(rows: DailyRow[], period: Period): { points: ChartPoi
         profit: day ? day.profit * f : 0,
       }
     })
+    const cutNote = isToday ? ` đến ${lastHour}h,` : ''
+    return {
+      points,
+      note: `${period.label || 'Kỳ đang chọn'} — theo giờ (${cutNote} phân bổ ước tính — chưa có dữ liệu giờ thật)`.replace('( ', '('),
+    }
   } else if (gran === 'day') {
     points = inRange.map((r) => ({ label: ddmm(r.date), gmv: r.gmv, cost: rowCost(r), profit: r.profit }))
   } else if (gran === 'week') {
