@@ -44,18 +44,41 @@ function dailyForPlatform(p: P, brand: string, start: string, end: string): Dail
   return mergeDailyRows(per)
 }
 
+// ---- tiny in-memory memo (with expiry sweep so the map can't grow unbounded) ----
+
+const memoStore = new Map<string, { val: unknown; exp: number }>()
+
+function memo<T>(key: string, ttlMs: number, fn: () => T): T {
+  const now = Date.now()
+  const hit = memoStore.get(key)
+  if (hit && hit.exp > now) return hit.val as T
+  const val = fn()
+  memoStore.set(key, { val, exp: now + ttlMs })
+  if (memoStore.size > 300) {
+    for (const [k, v] of memoStore) if (v.exp <= now) memoStore.delete(k)
+  }
+  return val
+}
+
+const MEMO_TTL = 60_000 // poller cadence — fresher than this doesn't exist in the DB anyway
+
 // ---- top products ----
 
+/** Per-shop top products, memoized: /api/view/overview computes aggregates for
+ *  tiktok + shopee + prev window and each folds COGS via topProducts — without the
+ *  memo that meant parsing the multi-MB raw_orders JSON ~6× per request. */
 function topProductsForShop(shopId: number, p: P, start: string, end: string, cat: Catalog): ProductPerf[] {
-  const period = `${start}:${end}`
-  const cached = loadSnapshotExact<ProductPerf>(shopId, p, 'top_products', period)
-  if (cached) return cached
-  const orders = loadRawOrders<Record<string, unknown>>(shopId, p, start, end)
-  if (orders.length === 0) return []
-  const netRatio = netRatioOf(loadDailyRows(shopId, p, start, end))
-  return p === 'tiktok'
-    ? topProductsFromTiktokOrders(orders as never, cat, netRatio)
-    : topProductsFromShopeeOrders(orders as never, cat, netRatio)
+  return memo(`top:${shopId}:${p}:${start}:${end}`, MEMO_TTL, () => {
+    const period = `${start}:${end}`
+    const cached = loadSnapshotExact<ProductPerf>(shopId, p, 'top_products', period)
+    if (cached) return cached
+    const orders = loadRawOrders<Record<string, unknown>>(shopId, p, start, end)
+    if (orders.length === 0) return []
+    const netRatio = netRatioOf(loadDailyRows(shopId, p, start, end))
+    return p === 'tiktok'
+      ? topProductsFromTiktokOrders(orders as never, cat, netRatio)
+      : topProductsFromShopeeOrders(orders as never, cat, netRatio)
+  })
 }
 
 export function topProducts(filter: PlatformFilter, brand: string, start: string, end: string): ProductPerf[] {
@@ -189,23 +212,10 @@ function sortOrders(rows: ReconOrder[], key: string, dir: 'asc' | 'desc'): Recon
   return arr
 }
 
-// Parsed+merged recon list per (brand|platform), so paging/search/sort don't re-parse
-// the ~10MB recon_cache blobs on every request. The poller refreshes the DB every 60s.
-interface ReconMemo {
-  rows: ReconOrder[]
-  exp: number
-}
-const reconMemo = new Map<string, ReconMemo>()
-const RECON_TTL = 60_000
-
+/** Parsed+merged recon list per (brand|platform), so paging/search/sort don't re-parse
+ *  the ~10MB recon_cache blobs on every request (shared memo, expiry-swept). */
 function reconList(filter: PlatformFilter, brand: string): ReconOrder[] {
-  const key = `${brand}|${filter}`
-  const now = Date.now()
-  const hit = reconMemo.get(key)
-  if (hit && hit.exp > now) return hit.rows
-  const rows = recon(filter, brand)
-  reconMemo.set(key, { rows, exp: now + RECON_TTL })
-  return rows
+  return memo(`recon:${brand}|${filter}`, MEMO_TTL, () => recon(filter, brand))
 }
 
 export interface OrdersPageOpts {

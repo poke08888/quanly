@@ -537,7 +537,12 @@ const QUICK_DAYS = 3
 const FULL_SWEEP_MS = 2 * 60 * 60 * 1000
 
 /** Fetch TikTok daily series from API and persist to daily_data table. */
-async function pollTikTokDailyForShop(shop: ShopRow, start: string, end: string): Promise<void> {
+async function pollTikTokDailyForShop(
+  shop: ShopRow,
+  start: string,
+  end: string,
+  full = false,
+): Promise<void> {
   const endExclusive = addDays(end, 1)
   const liveCreds = credsFromShop(shop)
   // analytics/202405/shop/performance consistently 504s — skip it in the daily poller
@@ -572,6 +577,14 @@ async function pollTikTokDailyForShop(shop: ShopRow, start: string, end: string)
       data: o,
     })),
   )
+  // Full sweeps only: rebuild recon_cache from the 60-day orders + finance already in
+  // hand, so Orders/Recon pages keep seeing NEW orders without a BFF restart. (Before,
+  // the cache was written only on cold-start and went permanently stale.) Bonus: with
+  // real finance in hand the per-order fees are populated instead of 0.
+  if (full) {
+    const reconRows = normalizeTiktokRecon(orderEnvelope, finance, buildCatalog())
+    saveReconCache(shop.id, 'tiktok', reconRows)
+  }
 }
 
 /** Fetch Shopee daily series from API and persist to daily_data table. */
@@ -666,8 +679,24 @@ async function pollShopeeSnapshotsForShop(shop: ShopRow, start: string, end: str
     console.warn(`[poller] SP recon shop ${shop.id}: ${(err as Error).message}`)
   }
 
-  // recon_cache NOT rebuilt here — loading 7k raw orders synchronously blocks event loop.
-  // Cache is warmed at startup from snapshots; route saves to cache on cold-start visit.
+  // Rebuild recon_cache from the full raw window (escrow embedded above) so Orders/Recon
+  // keep seeing new orders without a restart. Runs only on full sweeps (2h) — the ~1-2s
+  // synchronous load is acceptable at that cadence.
+  try {
+    type SpOrderWithIncome = OrderDetail & { _income?: OrderIncome }
+    const rawOrders = loadRawOrders<SpOrderWithIncome>(shop.id, 'shopee', start, end)
+    if (rawOrders.length > 0) {
+      const escrowMap = new Map<string, OrderIncome>()
+      for (const o of rawOrders) if (o._income) escrowMap.set(o.order_sn, o._income)
+      saveReconCache(
+        shop.id,
+        'shopee',
+        normalizeShopeeRecon(rawOrders as OrderDetail[], escrowMap, buildCatalog() as ShopeeCatalog),
+      )
+    }
+  } catch (err) {
+    console.warn(`[poller] SP recon cache shop ${shop.id}: ${(err as Error).message}`)
+  }
 }
 
 /**
@@ -696,7 +725,7 @@ async function pollOnce(full: boolean): Promise<void> {
   // Phase 1: daily data (must complete before snapshots that compute net ratio).
   await Promise.all([
     ...tktShops.map((s) =>
-      pollTikTokDailyForShop(s, start, end).catch((e) =>
+      pollTikTokDailyForShop(s, start, end, full).catch((e) =>
         console.warn(`[poller] TK daily shop ${s.id}: ${(e as Error).message}`),
       ),
     ),
