@@ -68,6 +68,7 @@ import {
   saveRawOrders,
   loadRawOrders,
   loadRawOrderIncomeMap,
+  saveHourlySnapshot,
   getRawOrdersCount,
   saveReconCache,
   loadReconCache,
@@ -586,6 +587,7 @@ async function pollTikTokDailyForShop(
     adsByDay,
   ).filter((r) => r.date >= start && r.date <= end)
   saveDailyRows(shop.id, 'tiktok', rows as unknown as Array<{ date: string } & Record<string, unknown>>)
+  snapshotHour(shop.id, 'tiktok', rows)
   saveRawOrders(
     shop.id, 'tiktok',
     (orderEnvelope.data.orders ?? []).map((o) => ({
@@ -617,6 +619,7 @@ async function pollShopeeDailyForShop(shop: ShopRow, start: string, end: string)
     (r) => r.date >= start && r.date <= end,
   )
   saveDailyRows(shop.id, 'shopee', rows as unknown as Array<{ date: string } & Record<string, unknown>>)
+  snapshotHour(shop.id, 'shopee', rows)
   // PRESERVE previously-embedded escrow: this save used to write `data: o` (no _income),
   // wiping the income the snapshots phase had attached — one reason fees stayed 0.
   const incomeKeep = loadRawOrderIncomeMap(shop.id, start, end)
@@ -819,6 +822,19 @@ function addDays(date: string, n: number): string {
  *  00:00–07:00 VN it still returns YESTERDAY's date, making the poller lag a day. */
 function vnToday(): string {
   return new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10)
+}
+
+/** Current hour 0..23 in Asia/Ho_Chi_Minh. */
+function vnHour(): number {
+  return new Date(Date.now() + 7 * 3600_000).getUTCHours()
+}
+
+/** Upsert TODAY's cumulative daily row under the current VN hour (real hourly data).
+ *  Runs every quick cycle; the last write within an hour ≈ totals through that hour. */
+function snapshotHour(shopId: number, platform: string, rows: Array<{ date: string }>): void {
+  const today = vnToday()
+  const row = rows.find((r) => r.date === today)
+  if (row) saveHourlySnapshot(shopId, platform, today, vnHour(), row as unknown as Record<string, unknown>)
 }
 
 function datesBetween(start: string, end: string): string[] {

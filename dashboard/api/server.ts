@@ -32,7 +32,7 @@ import {
   updateShop,
   deleteShop,
 } from './store'
-import { aggregate, campaigns, creators, gmvOnly, ordersPage, recon, series, topProducts } from './views'
+import { aggregate, campaigns, creators, gmvOnly, hourlySeries, ordersPage, recon, series, topProducts } from './views'
 import { mergeAggregates } from '../src/domain/metrics'
 import type { PlatformFilter } from '../src/data/types'
 
@@ -106,6 +106,9 @@ app.post('/api/view/overview', (req, res) => {
     tkAgg,
     spAgg,
     series: series(platform, brand, seriesW.start, seriesW.end),
+    // Real intraday points when the period is a single day (Hôm nay / Hôm qua);
+    // empty → the chart falls back to its estimated curve.
+    hourly: cur.start === cur.end ? hourlySeries(platform, brand, cur.start) : [],
     campaigns: campaigns(platform, brand, cur.start, cur.end),
     topProducts: topProducts(platform, brand, cur.start, cur.end),
     kpiActuals: {

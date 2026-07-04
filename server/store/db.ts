@@ -958,6 +958,51 @@ export function saveDailyRows(
   tx()
 }
 
+// ---- hourly snapshots (real intraday data) ----
+// The poller upserts TODAY's cumulative daily row under the current VN hour every
+// quick cycle; the last write in an hour ≈ cumulative totals through that hour.
+// The dashboard derives per-hour deltas → a REAL hourly chart (no synthetic curve).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS hourly_data (
+    shop_id    INTEGER NOT NULL,
+    platform   TEXT NOT NULL,
+    date       TEXT NOT NULL,
+    hour       INTEGER NOT NULL,
+    data       TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (shop_id, platform, date, hour)
+  );
+`)
+
+/** Upsert the cumulative snapshot for (date, hour). */
+export function saveHourlySnapshot(
+  shopId: number,
+  platform: string,
+  date: string,
+  hour: number,
+  data: Record<string, unknown>,
+): void {
+  db.prepare(`
+    INSERT INTO hourly_data (shop_id, platform, date, hour, data, fetched_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(shop_id, platform, date, hour)
+    DO UPDATE SET data=excluded.data, fetched_at=excluded.fetched_at
+  `).run(shopId, platform, date, hour, JSON.stringify(data), new Date().toISOString())
+}
+
+/** All cumulative hourly snapshots for a shop/platform/date, ordered by hour. */
+export function loadHourlyRows<T>(
+  shopId: number,
+  platform: string,
+  date: string,
+): Array<{ hour: number; data: T }> {
+  return (
+    db
+      .prepare('SELECT hour, data FROM hourly_data WHERE shop_id=? AND platform=? AND date=? ORDER BY hour')
+      .all(shopId, platform, date) as Array<{ hour: number; data: string }>
+  ).map((r) => ({ hour: r.hour, data: JSON.parse(r.data) as T }))
+}
+
 /** Load a cached snapshot, or null if missing or older than ttlMs (default 2h). */
 export function loadSnapshot<T>(
   shopId: number,

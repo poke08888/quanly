@@ -70,3 +70,17 @@ export function loadReconCache<T>(shopId: number, platform: string): T[] | null 
     .get(shopId, platform) as { data: string } | undefined
   return r ? (JSON.parse(r.data) as T[]) : null
 }
+
+/** Cumulative hourly snapshots for a date (written by the poller each quick cycle).
+ *  Returns [] when the table doesn't exist yet (old server not redeployed). */
+export function loadHourly<T>(shopId: number, platform: string, date: string): Array<{ hour: number; data: T }> {
+  try {
+    return (
+      db
+        .prepare('SELECT hour, data FROM hourly_data WHERE shop_id=? AND platform=? AND date=? ORDER BY hour')
+        .all(shopId, platform, date) as Array<{ hour: number; data: string }>
+    ).map((r) => ({ hour: r.hour, data: JSON.parse(r.data) as T }))
+  } catch {
+    return [] // table missing → treated as "no hourly data yet"
+  }
+}

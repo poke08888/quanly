@@ -3,6 +3,7 @@
 // No external API calls — reads come from api/readdb.ts, config from api/store.ts.
 import {
   loadDailyRows,
+  loadHourly,
   loadRawOrders,
   loadReconCache,
   loadSnapshotExact,
@@ -169,6 +170,72 @@ export function gmvOnly(filter: PlatformFilter, brand: string, start: string, en
   let gmv = 0
   for (const p of platformsFor(filter)) for (const r of dailyForPlatform(p, brand, start, end)) gmv += r.gmv
   return gmv
+}
+
+// ---- real hourly series (from poller's cumulative hourly snapshots) ----
+
+export interface HourPoint {
+  hour: number
+  gmv: number
+  cost: number
+  profit: number
+}
+
+/** Total cost of a cumulative row: COGS + ads + KOC + 6 platform fees (mirror of chart's rowCost). */
+function cumCost(r: DailyRow): number {
+  const f = r.fees
+  return (
+    r.cogs + r.ads + r.kocBooking +
+    f.commission_fee + f.payment_fee + f.service_fee +
+    f.seller_voucher + f.shipping_borne + f.affiliate_comm
+  )
+}
+
+/**
+ * REAL per-hour points for `date`: per shop, forward-fill the cumulative snapshots
+ * over 0..maxHour, sum across shops, then take hour-over-hour deltas (clamped ≥0 —
+ * cancellations can make cumulative GMV dip). Empty array when no snapshots yet
+ * (e.g. historical days before this feature) — the chart falls back to the estimate.
+ */
+export function hourlySeries(filter: PlatformFilter, brand: string, date: string): HourPoint[] {
+  interface Cum { gmv: number; cost: number; profit: number }
+  const perShop: Array<Map<number, Cum>> = []
+  let maxHour = -1
+  for (const p of platformsFor(filter)) {
+    for (const shop of resolveShops(p, brand)) {
+      const snaps = loadHourly<DailyRow>(shop.id, p, date)
+      if (snaps.length === 0) continue
+      const m = new Map<number, Cum>()
+      for (const s of snaps) {
+        m.set(s.hour, { gmv: s.data.gmv, cost: cumCost(s.data), profit: s.data.profit })
+        if (s.hour > maxHour) maxHour = s.hour
+      }
+      perShop.push(m)
+    }
+  }
+  if (maxHour < 0) return []
+
+  const points: HourPoint[] = []
+  let prev: Cum = { gmv: 0, cost: 0, profit: 0 }
+  const carry: Cum[] = perShop.map(() => ({ gmv: 0, cost: 0, profit: 0 }))
+  for (let h = 0; h <= maxHour; h++) {
+    const total: Cum = { gmv: 0, cost: 0, profit: 0 }
+    perShop.forEach((m, i) => {
+      const cur = m.get(h)
+      if (cur) carry[i] = cur // forward-fill gaps (poller down / hour skipped)
+      total.gmv += carry[i].gmv
+      total.cost += carry[i].cost
+      total.profit += carry[i].profit
+    })
+    points.push({
+      hour: h,
+      gmv: Math.max(0, total.gmv - prev.gmv),
+      cost: Math.max(0, total.cost - prev.cost),
+      profit: Math.max(0, total.profit - prev.profit),
+    })
+    prev = total
+  }
+  return points
 }
 
 // ---- orders page (server-side filter + sort + paginate over recon) ----

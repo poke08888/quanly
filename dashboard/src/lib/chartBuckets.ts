@@ -44,9 +44,29 @@ const HOUR_WEIGHTS = [
 
 const ddmm = (isoDate: string) => isoDate.slice(8, 10) + '/' + isoDate.slice(5, 7)
 
-export function buildChart(rows: DailyRow[], period: Period): { points: ChartPoint[]; note: string } {
+/** Real intraday point (hour deltas from the poller's cumulative snapshots). */
+export interface HourlyPoint {
+  hour: number
+  gmv: number
+  cost: number
+  profit: number
+}
+
+export function buildChart(
+  rows: DailyRow[],
+  period: Period,
+  hourly?: HourlyPoint[],
+): { points: ChartPoint[]; note: string } {
   const [startOff, endOff] = period.cur
   const gran = granularityFor(period)
+
+  // REAL hourly data available (poller snapshots) → use it, no synthetic curve.
+  if (gran === 'hour' && hourly && hourly.length > 0) {
+    return {
+      points: hourly.map((h) => ({ label: `${h.hour}h`, gmv: h.gmv, cost: h.cost, profit: h.profit })),
+      note: `${period.label || 'Kỳ đang chọn'} — theo giờ (dữ liệu thật)`,
+    }
+  }
   // period rows, oldest → newest (off high → low)
   const inRange = rows
     .filter((r) => r.off <= startOff && r.off >= endOff)

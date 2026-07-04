@@ -43,12 +43,22 @@ export interface Win {
 
 const enc = encodeURIComponent
 
+/** One REAL intraday point (hour-over-hour delta from the poller's cumulative snapshots). */
+export interface HourPoint {
+  hour: number
+  gmv: number
+  cost: number
+  profit: number
+}
+
 export interface OverviewPayload {
   cur: Aggregate
   prev: Aggregate
   tkAgg: Aggregate
   spAgg: Aggregate
   series: DailyRow[]
+  /** Non-empty only when the period is a single day AND hourly snapshots exist. */
+  hourly: HourPoint[]
   campaigns: Campaign[]
   topProducts: ProductPerf[]
   kpiActuals: Record<KpiPeriod, number>

@@ -27,7 +27,7 @@ import {
 } from '../data/brandShopStore'
 import { fetchMe, login as loginApi, logout as logoutApi, type AuthUser } from '../data/authApi'
 import { ApiAuthError } from '../data/apiBase'
-import { fetchOverview, fetchAds, fetchKoc, fetchRecon, fetchKpiActuals, type Win } from '../data/viewApi'
+import { fetchOverview, fetchAds, fetchKoc, fetchRecon, fetchKpiActuals, type Win, type HourPoint } from '../data/viewApi'
 import { periodSpan, type KpiPeriod } from '../lib/kpiProgress'
 import { buildPeriods, isoOffset, offsetOfIso, todayStart } from '../lib/period'
 import { emptyAggregate } from '../domain/metrics'
@@ -52,6 +52,8 @@ export interface DashboardData {
   tkAgg: Aggregate
   spAgg: Aggregate
   series: DailyRow[]
+  /** Real intraday points (single-day periods only; [] = fall back to estimate). */
+  hourly: HourPoint[]
   campaigns: Campaign[]
   creators: Creator[]
   topProducts: ProductPerf[]
@@ -73,6 +75,7 @@ function emptyData(kpiYear: number): DashboardData {
     tkAgg: emptyAggregate(),
     spAgg: emptyAggregate(),
     series: [],
+    hourly: [],
     campaigns: [],
     creators: [],
     topProducts: [],

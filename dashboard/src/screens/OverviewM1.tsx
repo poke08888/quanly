@@ -84,7 +84,7 @@ export function OverviewM1({ s }: { s: DashboardState }) {
     pieSub = 'LIVE · Video · Gian hàng/Card · Tìm kiếm'
   }
 
-  const { points: chartPoints, note: chartNote } = buildChart(d.series, s.period)
+  const { points: chartPoints, note: chartNote } = buildChart(d.series, s.period, d.hourly)
 
   const tops = d.topProducts
   const maxShare = tops.reduce((m, t) => Math.max(m, t.share), 0) || 1
