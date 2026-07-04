@@ -308,13 +308,13 @@ async function shopeeAdSpendByDayForShop(
   end: string,
 ): Promise<Map<string, number>> {
   if (shop.mode !== 'live') return new Map()
-  // Ads spend is OPTIONAL for daily rows: a 429/limit error must NOT kill order saving
-  // (it used to abort the whole SP daily poll). Shopee also caps the range at 1 month,
-  // so chunk ≤28 days; memo 10' cuts the call rate (quick cycle would otherwise hit
-  // the ads API every 60s — the source of the earlier 429 storms).
-  return memo(`spads:${shop.id}:${start}:${end}`, 600_000, async () => {
-    const out = new Map<string, number>()
-    try {
+  // Ads spend is OPTIONAL for daily rows: a 429/limit error must NOT kill order saving.
+  // Shopee caps the range at 1 month → chunk ≤28 days. memo caches only SUCCESS
+  // (cache.ts drops rejected promises), so an error retries on the next cycle instead
+  // of pinning zeros for 10 minutes; the adsClient queue+backoff absorbs 429 bursts.
+  try {
+    return await memo(`spads:${shop.id}:${start}:${end}`, 600_000, async () => {
+      const out = new Map<string, number>()
       let s = start
       while (s <= end) {
         const chunkEnd = addDays(s, 27) <= end ? addDays(s, 27) : end
@@ -322,11 +322,12 @@ async function shopeeAdSpendByDayForShop(
         for (const r of normalizeShopeeDailySpend(rows)) out.set(r.date, (out.get(r.date) ?? 0) + r.adSpend)
         s = addDays(chunkEnd, 1)
       }
-    } catch (err) {
-      console.warn(`[shop ${shop.id} "${shop.name}" sp-ads] bỏ qua chi phí ads: ${(err as Error).message}`)
-    }
-    return out
-  })
+      return out
+    })
+  } catch (err) {
+    console.warn(`[shop ${shop.id} "${shop.name}" sp-ads] bỏ qua chi phí ads: ${(err as Error).message}`)
+    return new Map()
+  }
 }
 
 /** Shopee CPC ad campaigns for ONE shop — reads ONLY from DB snapshot.

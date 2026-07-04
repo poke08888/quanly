@@ -28,18 +28,40 @@ function buildUrl(creds: ShopeeCreds, path: string, extra: Record<string, string
   return `${creds.baseUrl}${path}?${qs}`
 }
 
+// Shopee's ads module rate-limits HARD (429s even at modest volume). All ads calls go
+// through ONE serialized queue with spacing, and 429s retry with backoff inside the
+// queue (so later calls wait instead of piling on).
+const ADS_GAP_MS = 1200
+let adsChain: Promise<unknown> = Promise.resolve()
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+function throttled<T>(fn: () => Promise<T>): Promise<T> {
+  const next = adsChain.then(fn, fn).finally(() => sleep(ADS_GAP_MS))
+  adsChain = next.catch(() => undefined) // keep the chain alive after failures
+  return next
+}
+
 async function get<T>(creds: ShopeeCreds, path: string, extra: Record<string, string>): Promise<T> {
-  const res = await fetch(buildUrl(creds, path, extra), {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
+  return throttled(async () => {
+    for (let attempt = 1; ; attempt++) {
+      const res = await fetch(buildUrl(creds, path, extra), {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(20_000),
+      })
+      if (res.status === 429 && attempt <= 3) {
+        await sleep(attempt * 4000) // 4s / 8s / 12s backoff, inside the queue
+        continue
+      }
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        throw new Error(`Shopee ads ${path} HTTP ${res.status}: ${text.slice(0, 300)}`)
+      }
+      const json = (await res.json()) as T & { error?: string; message?: string }
+      if (json.error) throw new Error(`Shopee ads ${path} error ${json.error}: ${json.message}`)
+      return json
+    }
   })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`Shopee ads ${path} HTTP ${res.status}: ${text.slice(0, 300)}`)
-  }
-  const json = (await res.json()) as T & { error?: string; message?: string }
-  if (json.error) throw new Error(`Shopee ads ${path} error ${json.error}: ${json.message}`)
-  return json
 }
 
 /** Shop-level daily CPC ads performance. start/end are YYYY-MM-DD.
