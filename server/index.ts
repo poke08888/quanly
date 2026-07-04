@@ -697,6 +697,25 @@ async function pollShopeeSnapshotsForShop(shop: ShopRow, start: string, end: str
       campaign_name: names.get(String(r.campaign_id))?.name ?? r.campaign_name,
     }))
     saveSnapshot(shop.id, 'shopee', 'campaigns', period, normalizeShopeeCampaigns(named, brand))
+    // ALSO persist per-DAY rows (ISO dates, fixed key) so the dashboard can aggregate
+    // EXACTLY the requested window (Hôm nay / 7 ngày / tuỳ chỉnh) instead of falling
+    // back to a whole-sweep aggregate that ignores the filter.
+    const asNum = (v: unknown) => {
+      const n = Number(v)
+      return Number.isFinite(n) ? n : 0
+    }
+    const daily = named.map((r) => ({
+      campaign_id: String(r.campaign_id),
+      campaign_name: r.campaign_name,
+      date: String(r.date ?? '').split('-').reverse().join('-'), // dd-mm-yyyy → YYYY-MM-DD
+      impression: asNum(r.impression),
+      clicks: asNum(r.clicks),
+      expense: asNum(r.expense),
+      broad_gmv: asNum(r.broad_gmv),
+      broad_order: asNum(r.broad_order),
+      direct_order: asNum(r.direct_order),
+    }))
+    saveSnapshot(shop.id, 'shopee', 'campaigns_daily', 'rolling', daily)
     console.log(
       `[poller] SP campaigns shop ${shop.id}: ${activeIds.length} chiến dịch có chi tiêu / ${ids.length} tổng`,
     )

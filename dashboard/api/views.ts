@@ -116,11 +116,69 @@ export function aggregate(filter: PlatformFilter, brand: string, start: string, 
 
 // ---- campaigns / creators / recon ----
 
+/** Per-day campaign row persisted by the poller (type='campaigns_daily', ISO dates). */
+interface CampaignDailyRow {
+  campaign_id: string
+  campaign_name?: string
+  date: string
+  impression: number
+  clicks: number
+  expense: number
+  broad_gmv: number
+  broad_order: number
+  direct_order: number
+}
+
+/** Aggregate per-day rows within [start,end] into Campaign entries (same math as
+ *  normalizeShopeeCampaigns: sums + derived ctr/cpc/cpm/roas). */
+function aggregateCampaignDays(rows: CampaignDailyRow[], start: string, end: string): Campaign[] {
+  interface Agg { id: string; name?: string; spend: number; impressions: number; clicks: number; gmv: number; conversions: number }
+  const byId = new Map<string, Agg>()
+  for (const r of rows) {
+    if (r.date < start || r.date > end) continue
+    const a = byId.get(r.campaign_id) ?? {
+      id: r.campaign_id, name: r.campaign_name, spend: 0, impressions: 0, clicks: 0, gmv: 0, conversions: 0,
+    }
+    a.spend += r.expense
+    a.impressions += r.impression
+    a.clicks += r.clicks
+    a.gmv += r.broad_gmv
+    a.conversions += r.broad_order || r.direct_order
+    if (!a.name && r.campaign_name) a.name = r.campaign_name
+    byId.set(r.campaign_id, a)
+  }
+  return [...byId.values()]
+    .filter((a) => a.spend > 0)
+    .map((a) => ({
+      id: a.id,
+      name: a.name ?? `Campaign ${a.id}`,
+      brand: 'nonelab',
+      platform: 'shopee' as const,
+      type: 'CPC',
+      spend: a.spend,
+      gmv: a.gmv,
+      roas: a.spend ? a.gmv / a.spend : 0,
+      impressions: a.impressions,
+      ctr: a.impressions ? a.clicks / a.impressions : 0,
+      clicks: a.clicks,
+      cpc: a.clicks ? a.spend / a.clicks : 0,
+      cpm: a.impressions ? (a.spend / a.impressions) * 1000 : 0,
+      conversions: a.conversions,
+    }))
+}
+
 export function campaigns(filter: PlatformFilter, brand: string, start: string, end: string): Campaign[] {
   const period = `${start}:${end}`
   const per: Campaign[][] = []
   for (const p of platformsFor(filter)) {
     for (const shop of resolveShops(p, brand)) {
+      // Preferred: per-day rows → aggregate EXACTLY the requested window (the old
+      // whole-sweep snapshot ignored the period filter). Fallback keeps legacy data.
+      const daily = loadSnapshotLatest<CampaignDailyRow>(shop.id, p, 'campaigns_daily')
+      if (daily && daily.length > 0) {
+        per.push(aggregateCampaignDays(daily, start, end))
+        continue
+      }
       const snap =
         loadSnapshotExact<Campaign>(shop.id, p, 'campaigns', period) ??
         loadSnapshotLatest<Campaign>(shop.id, p, 'campaigns') ??
