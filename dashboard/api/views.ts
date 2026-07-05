@@ -285,18 +285,38 @@ export function hourlySeries(filter: PlatformFilter, brand: string, date: string
   let firstHour = 24
   for (const m of perShop) for (const h of m.keys()) if (h < firstHour) firstHour = h
 
-  // Summed cumulative per hour (per-shop forward-fill for gaps).
+  // Per-shop dense series (forward-fill), then DROP one-hour glitch snapshots: if any
+  // metric's cumulative dips vs the previous hour and the NEXT hour recovers past the
+  // old level, that snapshot came from a degraded poll cycle (TikTok 5xx/timeout, ads
+  // 429 → row saved with missing fees/ads), not from real cancellations. Keeping it
+  // fakes a cost≈0 hour with profit > GMV (the 7h "GMV 143K / lãi 993K" artifact).
+  const dense: Cum[][] = perShop.map((m) => {
+    const arr: Cum[] = []
+    let carry: Cum = { gmv: 0, cost: 0, profit: 0 }
+    for (let h = 0; h <= maxHour; h++) {
+      const cur = m.get(h)
+      if (cur) carry = cur
+      arr.push(carry)
+    }
+    for (let h = 1; h < maxHour; h++) {
+      const a = arr[h - 1]
+      const b = arr[h]
+      const c = arr[h + 1]
+      const dip = (k: keyof Cum) => b[k] < a[k] - 1 && c[k] >= a[k]
+      if (dip('gmv') || dip('cost') || dip('profit')) arr[h] = a
+    }
+    return arr
+  })
+
+  // Summed cumulative per hour.
   const cums: Cum[] = []
-  const carry: Cum[] = perShop.map(() => ({ gmv: 0, cost: 0, profit: 0 }))
   for (let h = 0; h <= maxHour; h++) {
     const total: Cum = { gmv: 0, cost: 0, profit: 0 }
-    perShop.forEach((m, i) => {
-      const cur = m.get(h)
-      if (cur) carry[i] = cur
-      total.gmv += carry[i].gmv
-      total.cost += carry[i].cost
-      total.profit += carry[i].profit
-    })
+    for (const arr of dense) {
+      total.gmv += arr[h].gmv
+      total.cost += arr[h].cost
+      total.profit += arr[h].profit
+    }
     cums.push(total)
   }
 
@@ -315,14 +335,17 @@ export function hourlySeries(filter: PlatformFilter, brand: string, date: string
       est: firstHour > 0 ? true : undefined,
     })
   }
-  // After firstHour: REAL hour-over-hour deltas (clamped ≥0 — cancellations can dip).
+  // After firstHour: REAL hour-over-hour deltas, clamped ≥0 (cancellations can dip).
+  // Profit is additionally capped at gmv − cost: in the source rows profit never
+  // exceeds revenue minus cost, so any excess here is a snapshot artifact.
   for (let h = firstHour + 1; h <= maxHour; h++) {
-    points.push({
-      hour: h,
-      gmv: Math.max(0, cums[h].gmv - cums[h - 1].gmv),
-      cost: Math.max(0, cums[h].cost - cums[h - 1].cost),
-      profit: Math.max(0, cums[h].profit - cums[h - 1].profit),
-    })
+    const gmv = Math.max(0, cums[h].gmv - cums[h - 1].gmv)
+    const cost = Math.max(0, cums[h].cost - cums[h - 1].cost)
+    const profit = Math.min(
+      Math.max(0, cums[h].profit - cums[h - 1].profit),
+      Math.max(0, gmv - cost),
+    )
+    points.push({ hour: h, gmv, cost, profit })
   }
   return points
 }

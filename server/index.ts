@@ -208,6 +208,21 @@ function bizCredsFromShop(shop: ShopRow): TikTokBizCreds {
 }
 
 /** Per-day ad spend for ONE shop (sample fixtures or live report), by YYYY-MM-DD. */
+/** Chi tiêu ads đã lưu sẵn trong daily_data — fallback khi API ads lỗi (429/5xx),
+ *  để không ghi đè chi tiêu thật đã biết bằng 0 (cost tụt tạm thời trên chart giờ). */
+function savedAdSpendByDay(
+  shop: ShopRow,
+  platform: string,
+  start: string,
+  end: string,
+): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const [date, row] of loadDailyRows<{ ads?: number }>(shop.id, platform, start, end)) {
+    if (typeof row.ads === 'number' && row.ads > 0) out.set(date, row.ads)
+  }
+  return out
+}
+
 async function adSpendByDayForShop(
   shop: ShopRow,
   start: string,
@@ -221,8 +236,8 @@ async function adSpendByDayForShop(
   try {
     rows = await fetchDailyReport(bizCredsFromShop(shop), start, end)
   } catch (err) {
-    console.warn(`[shop ${shop.id} "${shop.name}" ads] bỏ qua chi phí ads: ${(err as Error).message}`)
-    return new Map()
+    console.warn(`[shop ${shop.id} "${shop.name}" ads] lỗi ads, dùng chi tiêu đã lưu: ${(err as Error).message}`)
+    return savedAdSpendByDay(shop, 'tiktok', start, end)
   }
   const spend = normalizeDailySpend(rows)
   return new Map(spend.map((s) => [s.date, s.adSpend]))
@@ -325,8 +340,8 @@ async function shopeeAdSpendByDayForShop(
       return out
     })
   } catch (err) {
-    console.warn(`[shop ${shop.id} "${shop.name}" sp-ads] bỏ qua chi phí ads: ${(err as Error).message}`)
-    return new Map()
+    console.warn(`[shop ${shop.id} "${shop.name}" sp-ads] lỗi ads, dùng chi tiêu đã lưu: ${(err as Error).message}`)
+    return savedAdSpendByDay(shop, 'shopee', start, end)
   }
 }
 
@@ -570,16 +585,20 @@ async function pollTikTokDailyForShop(
   const [finance, orderEnvelope] = await Promise.all([
     fetchFinanceStatements(liveCreds, start, endExclusive).catch((err) => {
       console.warn(`[poller] shop ${shop.id} finance: ${(err as Error).message}`)
-      return { code: 0, message: 'skipped', data: { statements: [] } } as FinanceEnvelope
+      return null
     }),
     // endExclusive here too: fetchOrderSearch's create_time_lt is the START of its end
     // day, so passing `end` would permanently exclude today's orders (the bug that made
     // TikTok lag a day behind Shopee).
     fetchOrderSearch(liveCreds, start, endExclusive).catch((err) => {
       console.warn(`[poller] shop ${shop.id} orders: ${(err as Error).message}`)
-      return { code: 0, message: 'skipped', data: { orders: [] } } as OrderSearchEnvelope
+      return null
     }),
   ])
+  // TikTok API hỏng chu kỳ này (5xx/504/timeout xảy ra thường xuyên) → GIỮ dữ liệu đã
+  // lưu, chờ chu kỳ sau. Ghi đè bằng dữ liệu thiếu làm phí/GMV hôm nay tụt tạm thời
+  // rồi bật lại — snapshot giờ dính đúng cú tụt đó (chart 7h: chi phí 0, lãi > GMV).
+  if (!finance || !orderEnvelope) return
   const adsByDay = await adSpendByDayForShop(shop, start, endExclusive)
   const today = new Date(end + 'T00:00:00Z')
   const rows = normalizeDailyFromOrders(
@@ -741,7 +760,7 @@ async function pollShopeeSnapshotsForShop(shop: ShopRow, start: string, end: str
     )
     console.log(
       `[poller] SP escrow shop ${shop.id}: +${reconEscrow.size} mới, ${existingIncome.size} đã có, ` +
-        `${escrowFailed} lỗi / ${reconOrders.length} đơn 15 ngày`,
+        `${escrowFailed} lỗi / ${reconOrders.length} đơn (${reconStart}→${reconEnd})`,
     )
     // Embed income (new fetch first, else previously-stored) so routes read it from raw_orders.
     saveRawOrders(shop.id, 'shopee', reconOrders.map((o) => ({
