@@ -360,7 +360,12 @@ export function normalizeReconOrders(
         brand: cat?.brand ?? 'nonelab',
         date: dayOf(num(o.create_time)),
         sku,
-        product: li?.item_name ?? cat?.name ?? sku,
+        // Nối tên phân loại (model_name) để phân biệt các SKU cùng listing.
+        product:
+          (li?.item_name ?? cat?.name ?? sku) +
+          ((li as Record<string, unknown> | undefined)?.model_name
+            ? ' — ' + String((li as Record<string, unknown>).model_name)
+            : ''),
         qty,
         gmv,
         fees,
