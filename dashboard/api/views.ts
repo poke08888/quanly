@@ -338,14 +338,31 @@ export function hourlySeries(filter: PlatformFilter, brand: string, date: string
   // After firstHour: REAL hour-over-hour deltas, clamped ≥0 (cancellations can dip).
   // Profit is additionally capped at gmv − cost: in the source rows profit never
   // exceeds revenue minus cost, so any excess here is a snapshot artifact.
+  // MID-DAY GAPS (poller downtime, e.g. treo 13h-19h): delta over a multi-hour gap is
+  // spread across the gap along the estimate curve (est:true) instead of dumping the
+  // whole afternoon into the first hour back online.
+  const snapHours = new Set<number>()
+  for (const m of perShop) for (const h of m.keys()) snapHours.add(h)
+  let prev = firstHour
   for (let h = firstHour + 1; h <= maxHour; h++) {
-    const gmv = Math.max(0, cums[h].gmv - cums[h - 1].gmv)
-    const cost = Math.max(0, cums[h].cost - cums[h - 1].cost)
+    if (!snapHours.has(h)) continue
+    const gmv = Math.max(0, cums[h].gmv - cums[prev].gmv)
+    const cost = Math.max(0, cums[h].cost - cums[prev].cost)
     const profit = Math.min(
-      Math.max(0, cums[h].profit - cums[h - 1].profit),
+      Math.max(0, cums[h].profit - cums[prev].profit),
       Math.max(0, gmv - cost),
     )
-    points.push({ hour: h, gmv, cost, profit })
+    if (h - prev === 1) {
+      points.push({ hour: h, gmv, cost, profit })
+    } else {
+      let sw = 0
+      for (let k = prev + 1; k <= h; k++) sw += HOUR_WEIGHTS[k]
+      for (let k = prev + 1; k <= h; k++) {
+        const f = HOUR_WEIGHTS[k] / (sw || 1)
+        points.push({ hour: k, gmv: gmv * f, cost: cost * f, profit: profit * f, est: true })
+      }
+    }
+    prev = h
   }
   return points
 }

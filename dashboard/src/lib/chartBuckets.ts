@@ -64,11 +64,17 @@ export function buildChart(
 
   // REAL hourly data available (poller snapshots) → use it, no synthetic curve.
   if (gran === 'hour' && hourly && hourly.length > 0) {
-    const lastEst = hourly.reduce((m, h) => (h.est ? Math.max(m, h.hour) : m), -1)
+    const estHours = hourly.filter((h) => h.est).map((h) => h.hour)
+    const lastEst = estHours.length ? Math.max(...estHours) : -1
+    // est hours form a 0..k prefix → "trước khi bật theo dõi"; otherwise there are
+    // mid-day gaps (poller downtime) spread along the estimate curve.
+    const isPrefix = estHours.length === lastEst + 1
     const note =
-      lastEst >= 0
-        ? `${period.label || 'Kỳ đang chọn'} — theo giờ (0–${lastEst}h ước tính phân bổ, từ ${lastEst + 1}h dữ liệu thật)`
-        : `${period.label || 'Kỳ đang chọn'} — theo giờ (dữ liệu thật)`
+      lastEst < 0
+        ? `${period.label || 'Kỳ đang chọn'} — theo giờ (dữ liệu thật)`
+        : isPrefix
+          ? `${period.label || 'Kỳ đang chọn'} — theo giờ (0–${lastEst}h ước tính phân bổ, từ ${lastEst + 1}h dữ liệu thật)`
+          : `${period.label || 'Kỳ đang chọn'} — theo giờ (khoảng mất dữ liệu được phân bổ ước tính)`
     return {
       points: hourly.map((h) => ({ label: `${h.hour}h`, gmv: h.gmv, cost: h.cost, profit: h.profit })),
       note,
