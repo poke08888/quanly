@@ -159,7 +159,7 @@ app.get('/api/view/koc', (req, res) => {
 // Đồng bộ catalog COGS từ SKU THẬT trong kho đơn 2 sàn (recon 60 ngày):
 // SKU mới thêm với giá vốn 0 (chờ nhập), giá bán = GMV/SL thực tế; SKU đã có
 // giữ nguyên giá vốn, chỉ cập nhật tên/giá bán.
-app.post('/api/config/catalog/sync', (_req, res) => {
+function syncCatalogFromRecon(): { added: number; updated: number; totalSkus: number } {
   const rows = recon('all', 'group')
   const bySku = new Map<string, { name: string; brand: string; gmv: number; qty: number }>()
   for (const r of rows) {
@@ -184,8 +184,14 @@ app.post('/api/config/catalog/sync', (_req, res) => {
       updated++
     }
   }
-  res.json({ added, updated, totalSkus: bySku.size })
-})
+  return { added, updated, totalSkus: bySku.size }
+}
+
+app.post('/api/config/catalog/sync', (_req, res) => res.json(syncCatalogFromRecon()))
+
+// Auto-sync SKU mỗi GIỜ (+ 1 lần ~2 phút sau boot) — không cần bấm nút.
+setTimeout(() => { try { syncCatalogFromRecon() } catch { /* recon chưa sẵn sàng */ } }, 120_000)
+setInterval(() => { try { syncCatalogFromRecon() } catch { /* thoáng lỗi thì giờ sau bù */ } }, 3_600_000)
 
 app.get('/api/view/recon', (req, res) => {
   const platform = asPlatform(req.query.platform)
