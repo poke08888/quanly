@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { syncCatalog } from '../data/costStore'
 import type { DashboardState } from '../state/useDashboard'
 import { PlatformBadge } from '../components/ui/PlatformBadge'
 import { fmtInt, fmtPct } from '../lib/format'
@@ -99,9 +100,21 @@ export function CostsM5({ s }: { s: DashboardState }) {
       <div className="nl-grid-2" style={{ display: 'grid', gridTemplateColumns: '1.15fr 1fr', gap: 14, alignItems: 'start' }}>
         {/* COGS */}
         <div style={{ background: '#fff', border: '1px solid #e6e8ee', borderRadius: 13, overflow: 'auto hidden' }}>
-          <div style={{ padding: '16px 20px 12px' }}>
-            <div style={{ fontSize: 13.5, fontWeight: 700 }}>COGS theo SKU</div>
-            <div style={{ fontSize: 11, color: '#9aa0ac', marginTop: 2 }}>Giá vốn đơn vị — áp dụng từ 01/07/2026</div>
+          <div style={{ padding: '16px 20px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 13.5, fontWeight: 700 }}>COGS theo SKU</div>
+              <div style={{ fontSize: 11, color: '#9aa0ac', marginTop: 2 }}>Giá vốn đơn vị — SKU thật từ kho đơn 2 sàn, nhập giá vốn để tính biên LN</div>
+            </div>
+            <button
+              onClick={async () => {
+                const r = await syncCatalog()
+                alert(`Đồng bộ xong: +${r.added} SKU mới, ${r.updated} cập nhật / ${r.totalSkus} SKU từ sàn`)
+                window.location.reload()
+              }}
+              style={{ border: '1px solid #d9dce4', borderRadius: 9, background: '#191c22', color: '#fff', fontSize: 12, fontWeight: 600, padding: '7px 13px', cursor: 'pointer' }}
+            >
+              ⟳ Lấy SKU từ sàn
+            </button>
           </div>
           <div className="nl-trow" style={{ ...cogsGrid, ...headRow }}>
             <div>SKU</div>

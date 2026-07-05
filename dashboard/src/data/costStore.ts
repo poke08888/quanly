@@ -111,3 +111,10 @@ export function dateFromOffset(offset: number): string {
     String(d.getDate()).padStart(2, '0')
   )
 }
+
+/** Đồng bộ catalog từ SKU thật trong kho đơn 2 sàn (POST /api/config/catalog/sync). */
+export async function syncCatalog(): Promise<{ added: number; updated: number; totalSkus: number }> {
+  const res = await fetch(`${BFF_URL}/api/config/catalog/sync`, { method: 'POST', credentials: 'include' })
+  if (!res.ok) throw new Error('sync catalog failed: ' + res.status)
+  return (await res.json()) as { added: number; updated: number; totalSkus: number }
+}

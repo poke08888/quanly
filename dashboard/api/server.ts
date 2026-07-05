@@ -156,6 +156,37 @@ app.get('/api/view/koc', (req, res) => {
   res.json({ creators: creators(platform, brand, start, end), cur: aggregate(platform, brand, start, end) })
 })
 
+// Đồng bộ catalog COGS từ SKU THẬT trong kho đơn 2 sàn (recon 60 ngày):
+// SKU mới thêm với giá vốn 0 (chờ nhập), giá bán = GMV/SL thực tế; SKU đã có
+// giữ nguyên giá vốn, chỉ cập nhật tên/giá bán.
+app.post('/api/config/catalog/sync', (_req, res) => {
+  const rows = recon('all', 'group')
+  const bySku = new Map<string, { name: string; brand: string; gmv: number; qty: number }>()
+  for (const r of rows) {
+    if (!r.sku) continue
+    const a = bySku.get(r.sku) ?? { name: r.product, brand: r.brand, gmv: 0, qty: 0 }
+    a.gmv += r.gmv
+    a.qty += r.qty
+    if (r.product) a.name = r.product
+    bySku.set(r.sku, a)
+  }
+  const existing = new Map(listCogs().map((c) => [c.sku, c]))
+  let added = 0
+  let updated = 0
+  for (const [sku, a] of bySku) {
+    const price = a.qty ? Math.round(a.gmv / a.qty) : 0
+    const cur = existing.get(sku)
+    if (!cur) {
+      upsertCogs({ sku, unitCost: 0, name: a.name, brand: a.brand, price })
+      added++
+    } else if (cur.name !== a.name || cur.price !== price) {
+      upsertCogs({ sku, unitCost: cur.unitCost, name: a.name, brand: cur.brand, price })
+      updated++
+    }
+  }
+  res.json({ added, updated, totalSkus: bySku.size })
+})
+
 app.get('/api/view/recon', (req, res) => {
   const platform = asPlatform(req.query.platform)
   const brand = String(req.query.brand ?? 'group')
