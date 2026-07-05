@@ -636,7 +636,10 @@ async function pollShopeeDailyForShop(shop: ShopRow, start: string, end: string)
   const orders = await fetchOrdersOnly(shopeeCredsFromShop(shop), timeFrom, timeTo)
   const adsByDay = await shopeeAdSpendByDayForShop(shop, start, end)
   const today = new Date(end + 'T00:00:00Z')
-  const rows = normalizeShopeeDailySeries(orders, new Map(), today, adsByDay).filter(
+  // Escrow đã embed trong raw_orders (_income): dùng luôn cho daily rows — phí sàn
+  // thật vào fees (đường Chi phí hết thiếu phí Shopee) + tách nguồn Tiếp thị liên kết.
+  const incomeKeep = loadRawOrderIncomeMap(shop.id, start, end) as Map<string, OrderIncome>
+  const rows = normalizeShopeeDailySeries(orders, incomeKeep, today, adsByDay).filter(
     (r) => r.date >= start && r.date <= end,
   )
   saveDailyRows(shop.id, 'shopee', rows as unknown as Array<{ date: string } & Record<string, unknown>>)
@@ -664,9 +667,8 @@ async function pollShopeeDailyForShop(shop: ShopRow, start: string, end: string)
   } catch {
     /* ads snapshot là phụ trợ — bỏ qua lỗi 429/limit */
   }
-  // PRESERVE previously-embedded escrow: this save used to write `data: o` (no _income),
-  // wiping the income the snapshots phase had attached — one reason fees stayed 0.
-  const incomeKeep = loadRawOrderIncomeMap(shop.id, start, end)
+  // PRESERVE previously-embedded escrow (incomeKeep khai báo ở trên): save này từng
+  // ghi `data: o` trần làm mất _income mà phase snapshots đã gắn — lý do phí = 0.
   saveRawOrders(
     shop.id, 'shopee',
     orders.map((o) => ({

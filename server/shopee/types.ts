@@ -25,6 +25,7 @@ export interface Sources {
   video: number
   card: number
   search: number
+  affiliate: number
 }
 
 export interface DailyRow {

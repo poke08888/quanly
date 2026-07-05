@@ -26,12 +26,14 @@ export const SOURCE_COLORS: Record<string, string> = {
   video: '#8f5be8',
   card: '#e8890c',
   search: '#0f9d6b',
+  affiliate: '#0e7490',
 }
 export const SOURCE_LABELS: Record<string, string> = {
   live: 'LIVE',
   video: 'Video',
-  card: 'Gian hàng / Card',
+  card: 'Thẻ sản phẩm',
   search: 'Tìm kiếm',
+  affiliate: 'Tiếp thị liên kết',
 }
 
 export const FEE_LABELS: Record<string, string> = {

@@ -123,7 +123,12 @@ export function Donut({
           onMouseLeave={() => setHoverI(null)}
         >
           <span style={{ width: 11, height: 11, borderRadius: 4, background: x.color, flexShrink: 0 }} />
-          <span style={{ fontWeight: 600, flex: 1 }}>{x.label}</span>
+          <span
+            title={x.label}
+            style={{ fontWeight: 600, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+          >
+            {x.label}
+          </span>
           {!embedded && (
             <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmt(x.value)}</span>
           )}

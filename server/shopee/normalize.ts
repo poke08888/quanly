@@ -86,6 +86,8 @@ interface DayAcc {
   cancelled: number
   returned: number
   fees: Fees
+  /** GMV các đơn có hoa hồng AMS (tiếp thị liên kết) trong escrow. */
+  affGmv: number
 }
 
 /**
@@ -107,7 +109,7 @@ export function normalizeDailySeries(
     const amount = num(o.total_amount)
     const acc =
       byDay.get(day) ??
-      ({ gmv: 0, orders: 0, cancelled: 0, returned: 0, fees: blankFees() } as DayAcc)
+      ({ gmv: 0, orders: 0, cancelled: 0, returned: 0, fees: blankFees(), affGmv: 0 } as DayAcc)
 
     acc.gmv += amount
     acc.orders += 1
@@ -118,6 +120,9 @@ export function normalizeDailySeries(
     if (income) {
       const f = normalizeFees(income)
       FEE_KEYS.forEach((k) => (acc.fees[k] += f[k]))
+      // Đơn có hoa hồng AMS = đơn từ Tiếp thị liên kết (nguồn thật duy nhất
+      // Shopee API tách được; Live/Video không có endpoint → gộp Thẻ sản phẩm).
+      if (num(income.order_ams_commission_fee) > 0) acc.affGmv += amount
     }
     byDay.set(day, acc)
   }
@@ -157,8 +162,15 @@ export function normalizeDailySeries(
       cancelled: acc.cancelled,
       returned: acc.returned,
       fees: acc.fees,
-      // TODO Shopee has no equivalent traffic-source split here. Default 0.
-      sources: { live: 0, video: 0, card: 0, search: 0 },
+      // Tiếp thị liên kết = thật (đơn có AMS trong escrow); Live/Video: API không
+      // tách → phần còn lại quy về Thẻ sản phẩm.
+      sources: {
+        live: 0,
+        video: 0,
+        card: Math.max(0, acc.gmv - acc.affGmv),
+        search: 0,
+        affiliate: acc.affGmv,
+      },
     })
   }
 

@@ -54,7 +54,7 @@ export function GmvSourceBreakdown({
   const [view, setView] = useState<'content' | 'order'>('content')
   const [hoverKey, setHoverKey] = useState<string | null>(null)
 
-  const keys = (['live', 'video', 'card', 'search'] as SourceKey[]).filter((k) => sources[k] > 0)
+  const keys = (['live', 'video', 'card', 'search', 'affiliate'] as SourceKey[]).filter((k) => sources[k] > 0)
   const total = keys.reduce((s, k) => s + sources[k], 0) || 1
 
   const donutItems: DonutItem[] = keys.map((k) => ({

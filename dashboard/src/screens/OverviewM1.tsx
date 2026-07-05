@@ -77,13 +77,23 @@ export function OverviewM1({ s }: { s: DashboardState }) {
     pieTitle = 'Tỷ trọng doanh thu theo sàn'
     pieSub = 'GMV TikTok Shop vs Shopee — chọn riêng từng sàn để xem theo nguồn'
   } else {
-    pieItems = (['live', 'video', 'card', 'search'] as const).map((k) => ({
+    // Shopee: cấu trúc theo Seller Center (Thẻ sản phẩm · Live · Video · Tiếp thị
+    // liên kết) — Tiếp thị liên kết là số thật (đơn có hoa hồng AMS trong escrow);
+    // Live/Video API chưa tách nên đang gộp trong Thẻ sản phẩm.
+    const keys =
+      s.platform === 'shopee'
+        ? (['card', 'live', 'video', 'affiliate'] as const)
+        : (['live', 'video', 'card', 'search'] as const)
+    pieItems = keys.map((k) => ({
       label: SOURCE_LABELS[k],
       value: cur.sources[k],
       color: SOURCE_COLORS[k],
     }))
     pieTitle = 'GMV theo nguồn — ' + (s.platform === 'tiktok' ? 'TikTok Shop' : 'Shopee')
-    pieSub = 'LIVE · Video · Gian hàng/Card · Tìm kiếm'
+    pieSub =
+      s.platform === 'shopee'
+        ? 'Thẻ sản phẩm · Live · Video · Tiếp thị liên kết (Live/Video API chưa tách — gộp trong Thẻ sản phẩm)'
+        : 'LIVE · Video · Thẻ sản phẩm · Tìm kiếm'
   }
 
   const { points: chartPoints, note: chartNote } = buildChart(d.series, s.period, d.hourly)

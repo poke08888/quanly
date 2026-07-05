@@ -136,7 +136,7 @@ function toDailyRow(interval: AnalyticsInterval, fees: Fees, today: Date, ads: n
 
   // TODO source split (live/video/card/search) requires the traffic-source /
   // shop_lives analytics endpoints; not derivable from these two. Default 0.
-  const sources = { live: 0, video: 0, card: 0, search: 0 }
+  const sources = { live: 0, video: 0, card: 0, search: 0, affiliate: 0 }
 
   return {
     date: interval.start_date,
@@ -238,7 +238,7 @@ export function normalizeDailyFromOrders(
         cancelled: 0,
         returned: 0,
         fees: dayFees,
-        sources: { live: 0, video: 0, card: 0, search: 0 },
+        sources: { live: 0, video: 0, card: 0, search: 0, affiliate: 0 },
       } as DailyRow
     })
     .sort((a, b) => (a.date < b.date ? -1 : 1))

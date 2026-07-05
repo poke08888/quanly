@@ -47,6 +47,7 @@ export interface Sources {
   video: number
   card: number
   search: number
+  affiliate: number
 }
 
 /** One day of raw combined facts, per platform, already brand-scaled. */

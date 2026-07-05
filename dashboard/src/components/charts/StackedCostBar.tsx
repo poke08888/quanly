@@ -1,4 +1,4 @@
-// "1 đồng GMV đi đâu?" — 100% stacked bar of the 7-segment cost composition,
+// "Cấu trúc GMV" — 100% stacked bar of the 7-segment cost composition,
 // with an optional same-period comparison delta on the right of each legend row.
 // Entry animation: segments grow from the left. Hover: highlight segment + tooltip.
 import { useRef, useState } from 'react'
@@ -91,7 +91,7 @@ export function StackedCostBar({
         flexDirection: 'column',
       }}
     >
-      <div style={{ fontSize: 13.5, fontWeight: 700 }}>1 đồng GMV đi đâu?</div>
+      <div style={{ fontSize: 13.5, fontWeight: 700 }}>Cấu trúc GMV</div>
       <div style={{ fontSize: 11, color: '#9aa0ac', marginTop: 2 }}>
         Cơ cấu 100% GMV — lợi nhuận & các nhóm chi phí{compare && prev ? ' · Δ so cùng kỳ' : ''}
       </div>

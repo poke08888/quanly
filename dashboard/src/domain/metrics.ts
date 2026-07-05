@@ -31,7 +31,7 @@ export function emptyAggregate(): Aggregate {
     cancelled: 0,
     returned: 0,
     fees: blankFees(),
-    sources: { live: 0, video: 0, card: 0, search: 0 },
+    sources: { live: 0, video: 0, card: 0, search: 0, affiliate: 0 },
     marginPct: 0,
     roas: 0,
     cir: 0,
@@ -56,7 +56,7 @@ export function aggregateFromRows(rows: DailyRow[]): Aggregate {
     acc.cancelled += r.cancelled
     acc.returned += r.returned
     FEE_KEYS.forEach((k) => (acc.fees[k] += r.fees[k]))
-    ;(['live', 'video', 'card', 'search'] as const).forEach(
+    ;(['live', 'video', 'card', 'search', 'affiliate'] as const).forEach(
       (s) => (acc.sources[s] += r.sources[s]),
     )
   }
@@ -80,7 +80,7 @@ export function mergeAggregates(parts: Aggregate[]): Aggregate {
     acc.cancelled += a.cancelled
     acc.returned += a.returned
     FEE_KEYS.forEach((k) => (acc.fees[k] += a.fees[k]))
-    ;(['live', 'video', 'card', 'search'] as const).forEach((s) => (acc.sources[s] += a.sources[s]))
+    ;(['live', 'video', 'card', 'search', 'affiliate'] as const).forEach((s) => (acc.sources[s] += a.sources[s]))
   }
   return withKpis(acc)
 }
