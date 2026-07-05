@@ -263,6 +263,25 @@ function fmtFollows(followers: number): string {
  *   booking = 0 (internal KOC booking store, not the affiliate API).
  *   cost = commission + booking; roi = gmv / cost; share = gmv / total gmv.
  */
+/** First non-empty value among dotted-path candidates. The affiliate API's field
+ *  names can't be confirmed until the Affiliate Seller scope is granted, so the
+ *  aggregation extracts defensively; the client logs order[0]'s keys on the first
+ *  successful page so the candidates can be tightened from the prod log. */
+function pick(o: unknown, ...paths: string[]): unknown {
+  for (const p of paths) {
+    const v = p
+      .split('.')
+      .reduce<unknown>((x, k) => (x as Record<string, unknown> | undefined)?.[k], o)
+    if (v != null && v !== '') return v
+  }
+  return undefined
+}
+
+function itemsOf(o: AffiliateOrder): Array<Record<string, unknown>> {
+  const items = pick(o, 'items', 'order_line_items', 'skus', 'products')
+  return Array.isArray(items) ? (items as Array<Record<string, unknown>>) : []
+}
+
 export function normalizeCreators(orders: AffiliateOrder[], brand: string): Creator[] {
   interface Agg {
     id: string
@@ -274,16 +293,36 @@ export function normalizeCreators(orders: AffiliateOrder[], brand: string): Crea
   }
   const byCreator = new Map<string, Agg>()
   for (const o of orders) {
-    const id = String(o.creator_id ?? '')
+    const id = String(
+      pick(o, 'creator_user_id', 'creator_id', 'creator.user_id', 'creator.creator_id') ?? '',
+    )
     if (!id) continue
+    const name = pick(
+      o,
+      'creator_username', 'creator_name', 'creator_nickname',
+      'creator.username', 'creator.nickname', 'creator.name',
+    ) as string | undefined
     const a =
       byCreator.get(id) ??
-      { id, name: o.creator_name, followers: 0, gmv: 0, commission: 0, videos: new Set<string>() }
-    a.gmv += num(o.gmv) // TODO confirm gmv field name
-    a.commission += num(o.commission) // TODO confirm commission field name
-    if (o.creator_follower_count != null) a.followers = num(o.creator_follower_count) // TODO confirm
-    if (!a.name && o.creator_name) a.name = o.creator_name
-    if (o.content_id) a.videos.add(String(o.content_id)) // TODO confirm content/video id
+      { id, name, followers: 0, gmv: 0, commission: 0, videos: new Set<string>() }
+    const items = itemsOf(o)
+    const gmv =
+      pick(o, 'payment_amount', 'pay_amount', 'order_amount', 'settlement_amount', 'gmv') ??
+      items.reduce((s, it) => s + num(pick(it, 'payment_amount', 'pay_amount', 'sale_price', 'item_amount')), 0)
+    const commission =
+      pick(o, 'actual_commission', 'estimated_commission', 'affiliate_commission', 'commission') ??
+      items.reduce(
+        (s, it) => s + num(pick(it, 'actual_commission', 'estimated_commission', 'commission')),
+        0,
+      )
+    a.gmv += num(gmv)
+    a.commission += num(commission)
+    const followers = pick(o, 'creator_follower_count', 'creator.follower_count')
+    if (followers != null) a.followers = num(followers)
+    if (!a.name && name) a.name = name
+    const content =
+      pick(o, 'content_id', 'video_id') ?? items.map((it) => pick(it, 'content_id', 'video_id')).find(Boolean)
+    if (content) a.videos.add(String(content))
     byCreator.set(id, a)
   }
   const total = [...byCreator.values()].reduce((s, a) => s + a.gmv, 0) || 1

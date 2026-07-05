@@ -102,16 +102,11 @@ export interface FinanceEnvelope {
 
 // ---- Affiliate Seller API (not fully public — field names best-effort) ----
 
-/** One affiliate order attributed to a creator. */
+/** One affiliate order attributed to a creator. Field names are unverifiable until
+ *  the Affiliate Seller scope is granted (probe 2026-07-05: version 202410 valid,
+ *  call blocked by code 105005) — normalizeCreators extracts via candidate paths. */
 export interface AffiliateOrder {
   order_id?: string
-  creator_id: string
-  creator_name?: string // TODO confirm; else derive/label
-  creator_follower_count?: number // TODO confirm
-  // VND amounts.
-  gmv?: number | string // TODO confirm field name (order/settlement amount)
-  commission?: number | string // TODO confirm (affiliate commission amount)
-  content_id?: string // TODO confirm; used to count distinct videos
   create_time?: number | string
   [key: string]: unknown
 }
@@ -119,10 +114,11 @@ export interface AffiliateOrder {
 export interface AffiliateOrdersEnvelope {
   code: number
   message: string
-  data: {
-    orders: AffiliateOrder[]
+  data?: {
+    orders?: AffiliateOrder[]
     next_page_token?: string
     total_count?: number
+    [key: string]: unknown
   }
 }
 

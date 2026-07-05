@@ -654,6 +654,9 @@ async function pollShopeeDailyForShop(shop: ShopRow, start: string, end: string)
   )
 }
 
+/** Shops already warned about the missing Affiliate Seller scope (per boot). */
+const affiliateScopeWarned = new Set<number>()
+
 /** Fetch TikTok snapshot data (campaigns, creators, products, recon) and persist. */
 async function pollTikTokSnapshotsForShop(shop: ShopRow, start: string, end: string): Promise<void> {
   const period = `${start}:${end}`
@@ -673,13 +676,25 @@ async function pollTikTokSnapshotsForShop(shop: ShopRow, start: string, end: str
   }
 
   try {
-    // Affiliate seller orders API path is not publicly documented — skip gracefully.
     const orders = await fetchAffiliateOrders(credsFromShop(shop), start, addDays(end, 1))
-    saveSnapshot(shop.id, 'tiktok', 'creators', period, normalizeCreators(orders, brand))
+    const creators = normalizeCreators(orders, brand)
+    saveSnapshot(shop.id, 'tiktok', 'creators', period, creators)
+    console.log(`[poller] TK creators shop ${shop.id}: ${creators.length} creator / ${orders.length} đơn affiliate`)
   } catch (err) {
-    // 404 = affiliate orders endpoint not available for this app scope; non-fatal.
     const msg = (err as Error).message
-    if (!msg.includes('HTTP 404')) console.warn(`[poller] TK creators shop ${shop.id}: ${msg}`)
+    if (msg.includes('105005')) {
+      // Thiếu scope Affiliate Seller — cần bật scope cho app trong Partner Center rồi
+      // ủy quyền lại shop; báo 1 lần mỗi lần boot, không spam mỗi sweep.
+      if (!affiliateScopeWarned.has(shop.id)) {
+        affiliateScopeWarned.add(shop.id)
+        console.warn(
+          `[poller] TK creators shop ${shop.id}: app CHƯA CÓ scope Affiliate Seller ` +
+            `(105005) — bật scope trong Partner Center + re-authorize shop để lấy dữ liệu KOC`,
+        )
+      }
+    } else if (!msg.includes('HTTP 404')) {
+      console.warn(`[poller] TK creators shop ${shop.id}: ${msg}`)
+    }
   }
 
   // top_products and recon_cache are NOT rebuilt here — loading 20k raw orders
