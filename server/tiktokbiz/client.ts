@@ -35,6 +35,7 @@ async function getJson<T>(
       'Access-Token': creds.accessToken,
       'Content-Type': 'application/json',
     },
+    signal: AbortSignal.timeout(20_000),
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')

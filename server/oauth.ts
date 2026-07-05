@@ -49,7 +49,13 @@ export async function exchangeTikTokCode(
   })
   // TODO confirm exact path/version against the sandbox (/api/v2/token/get).
   const url = `${TIKTOK_AUTH_URL}/api/v2/token/get?${qs.toString()}`
-  const res = await fetch(url, { method: 'GET', headers: { 'Content-Type': 'application/json' } })
+  // Timeout BẮT BUỘC: fetch không signal có thể treo vĩnh viễn trên socket chết —
+  // freshTokens chạy đầu mỗi chu kỳ poll, 1 lần treo là pollBusy kẹt, poller đứng im.
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(20_000),
+  })
   const json = (await res.json()) as {
     code?: number
     message?: string
@@ -89,7 +95,11 @@ async function refreshTikTok(shop: ShopRow): Promise<RefreshResult> {
   })
   // TODO confirm exact path/version against the sandbox (/api/v2/token/refresh).
   const url = `${TIKTOK_AUTH_URL}/api/v2/token/refresh?${qs.toString()}`
-  const res = await fetch(url, { method: 'GET', headers: { 'Content-Type': 'application/json' } })
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(20_000),
+  })
   const json = (await res.json()) as {
     code?: number
     message?: string
@@ -128,6 +138,7 @@ async function refreshShopee(shop: ShopRow): Promise<RefreshResult> {
       partner_id: Number(c.partnerId ?? 0),
       shop_id: Number(c.shopId ?? 0),
     }),
+    signal: AbortSignal.timeout(20_000),
   })
   const json = (await res.json()) as {
     error?: string

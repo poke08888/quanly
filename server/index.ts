@@ -868,17 +868,38 @@ async function pollOnce(full: boolean): Promise<void> {
 // full sweep can run for minutes, and overlapping sweeps used to pile up concurrent
 // API calls (self-inflicted rate-limiting). One cycle at a time; extra ticks skip.
 let pollBusy = false
+let pollBusySince = 0
 let lastFullSweepAt = 0
 
+// Watchdog: mọi fetch đã có timeout 20-25s, nhưng nếu còn đường treo nào khác thì
+// pollBusy kẹt true → poller đứng im lặng vĩnh viễn (đã xảy ra: đứng từ 12:34 tới
+// khi restart). Quá 45 phút → nhả khóa để chu kỳ sau chạy tiếp; sweep cũ nếu còn
+// sống sẽ chỉ ghi đè dữ liệu bằng bản mới hơn, không phá gì.
+const POLL_STUCK_MS = 45 * 60_000
+
+let tickSeq = 0
+
 async function pollTick(): Promise<void> {
-  if (pollBusy) return
+  if (pollBusy) {
+    if (pollBusySince && Date.now() - pollBusySince > POLL_STUCK_MS) {
+      console.warn(`[poller] watchdog: sweep kẹt > ${POLL_STUCK_MS / 60_000} phút — nhả khóa, chạy chu kỳ mới`)
+      pollBusy = false
+    } else {
+      return
+    }
+  }
   pollBusy = true
+  pollBusySince = Date.now()
+  const me = ++tickSeq // sweep bị watchdog nhả mà "sống lại" thì không được đạp khóa của sweep mới
   try {
     const full = Date.now() - lastFullSweepAt >= FULL_SWEEP_MS
     await pollOnce(full)
     if (full) lastFullSweepAt = Date.now()
   } finally {
-    pollBusy = false
+    if (tickSeq === me) {
+      pollBusy = false
+      pollBusySince = 0
+    }
   }
 }
 
@@ -1160,6 +1181,7 @@ app.get('/api/shopee/oauth/callback', async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code, partner_id: Number(c.partnerId), shop_id: Number(shopIdFromCb) }),
+      signal: AbortSignal.timeout(20_000),
     })
     const json = (await tokenRes.json()) as {
       access_token?: string; refresh_token?: string; expire_in?: number
