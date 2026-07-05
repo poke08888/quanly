@@ -475,6 +475,14 @@ export function normalizeReconOrders(
       const sku = String(li?.seller_sku ?? li?.sku_id ?? '')
       const cat = catalog.get(sku)
       const qty = (o.line_items ?? []).reduce((s, x) => s + (num(x.quantity) || 1), 0) || 1
+      // Đơn nhiều sản phẩm: gộp đủ line_items theo tên (TikTok lặp 1 dòng/sản phẩm;
+      // trước đây chỉ lấy dòng đầu nên đơn mua nhiều món hiển thị thiếu).
+      const itemAgg = new Map<string, number>()
+      for (const x of o.line_items ?? []) {
+        const name = String(x.product_name ?? x.seller_sku ?? x.sku_id ?? '')
+        if (name) itemAgg.set(name, (itemAgg.get(name) ?? 0) + (num(x.quantity) || 1))
+      }
+      const items = [...itemAgg.entries()].map(([name, n]) => ({ name, qty: n }))
       const fees = blankFees()
       FEE_KEYS.forEach((k) => (fees[k] = (periodFees[k] / periodGmv) * gmv))
       const net = gmv - FEE_KEYS.reduce((s, k) => s + fees[k], 0)
@@ -490,6 +498,7 @@ export function normalizeReconOrders(
         fees,
         net,
         isSettled: ttSettled(String(o.status ?? '')),
+        ...(items.length > 1 ? { items } : {}),
       }
     })
     .sort((a, b) => (a.date < b.date ? 1 : -1))

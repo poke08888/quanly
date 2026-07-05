@@ -54,6 +54,8 @@ export interface HourPoint {
 export interface OverviewPayload {
   cur: Aggregate
   prev: Aggregate
+  /** true = prev là hôm qua cắt đúng giờ-phút hiện tại (kỳ Hôm nay). */
+  prevAligned?: boolean
   tkAgg: Aggregate
   spAgg: Aggregate
   series: DailyRow[]
@@ -81,8 +83,23 @@ export function fetchOverview(req: OverviewRequest): Promise<OverviewPayload> {
   return apiFetch('/api/view/overview', { method: 'POST', body: JSON.stringify(req) })
 }
 
-/** m3 — ads campaigns over the window. */
-export function fetchAds(platform: PlatformFilter, brand: string, w: Win): Promise<{ campaigns: Campaign[] }> {
+/** Tổng ads kỳ trước — Hôm nay so với hôm qua CẮT đúng giờ-phút hiện tại. */
+export interface AdsCompare {
+  spend: number
+  impressions: number
+  clicks: number
+  conversions: number
+  gmv: number
+  aligned: boolean
+  est: boolean
+}
+
+/** m3 — ads campaigns over the window + kỳ trước để so sánh. */
+export function fetchAds(
+  platform: PlatformFilter,
+  brand: string,
+  w: Win,
+): Promise<{ campaigns: Campaign[]; adsCompare: AdsCompare | null }> {
   return apiFetch(`/api/view/ads?platform=${platform}&brand=${enc(brand)}&start=${w.start}&end=${w.end}`)
 }
 

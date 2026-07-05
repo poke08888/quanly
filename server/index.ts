@@ -641,6 +641,29 @@ async function pollShopeeDailyForShop(shop: ShopRow, start: string, end: string)
   )
   saveDailyRows(shop.id, 'shopee', rows as unknown as Array<{ date: string } & Record<string, unknown>>)
   snapshotHour(shop.id, 'shopee', rows)
+  // Snapshot ads HÔM NAY theo giờ (spend + phễu impression/click/conversion) —
+  // nguồn cho so sánh "cùng giờ-phút hôm qua" ở trang Ads. Lỗi ads không chặn đơn.
+  try {
+    const t = vnToday()
+    if (end >= t) {
+      const advRows = await memo(`spads1d:${shop.id}:${t}`, 600_000, () =>
+        fetchAdsDaily(shopeeCredsFromShop(shop), t, t),
+      )
+      const r0 = advRows[0] as Record<string, unknown> | undefined
+      if (r0) {
+        const n = (v: unknown) => Number(v) || 0
+        saveHourlySnapshot(shop.id, 'shopee-ads', t, vnHour(), {
+          spend: n(r0.expense),
+          impressions: n(r0.impression),
+          clicks: n(r0.clicks),
+          conversions: n(r0.broad_order),
+          gmv: n(r0.broad_gmv),
+        })
+      }
+    }
+  } catch {
+    /* ads snapshot là phụ trợ — bỏ qua lỗi 429/limit */
+  }
   // PRESERVE previously-embedded escrow: this save used to write `data: o` (no _income),
   // wiping the income the snapshots phase had attached — one reason fees stayed 0.
   const incomeKeep = loadRawOrderIncomeMap(shop.id, start, end)

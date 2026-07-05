@@ -2,6 +2,7 @@ import type { DashboardState } from '../state/useDashboard'
 import { StatCard } from '../components/ui/KpiCard'
 import { PlatformBadge } from '../components/ui/PlatformBadge'
 import { fmtInt, fmtPct, fmtX } from '../lib/format'
+import { deltaChip } from '../lib/deltaChip'
 import type { Campaign } from '../data/types'
 import { useSort } from '../lib/useSort'
 import { SortHeader } from '../components/ui/SortHeader'
@@ -42,6 +43,22 @@ export function AdsM3({ s }: { s: DashboardState }) {
   const blendRoas = totSpend ? totAdsGmv / totSpend : 0
   const avgCvr = totClicks ? totConv / totClicks : 0
 
+  // So sánh kỳ trước — với "Hôm nay" server cắt hôm qua đúng giờ-phút hiện tại.
+  const cmp = d.adsCompare
+  const chip = (cur: number, prevV: number, invert = false) =>
+    cmp ? deltaChip(cur, prevV, true, invert) : undefined
+  const pCtr = cmp && cmp.impressions ? cmp.clicks / cmp.impressions : 0
+  const pCvr = cmp && cmp.clicks ? cmp.conversions / cmp.clicks : 0
+  const pCpc = cmp && cmp.clicks ? cmp.spend / cmp.clicks : 0
+  const pRoas = cmp && cmp.spend ? cmp.gmv / cmp.spend : 0
+  const cmpNote = cmp
+    ? cmp.aligned
+      ? cmp.est
+        ? 'So với cùng giờ-phút hôm qua (chi phí thật · phễu ước tính phân bổ — snapshot ads bắt đầu ghi từ hôm nay, mai là số thật)'
+        : 'So với cùng giờ-phút hôm qua (dữ liệu thật)'
+      : 'So với kỳ trước liền kề'
+    : null
+
   // ----- charts -----
   const roasItems = [...camps]
     .sort((a, b) => b.roas - a.roas)
@@ -73,17 +90,21 @@ export function AdsM3({ s }: { s: DashboardState }) {
 
   return (
     <div className="nl-fade">
+      {cmpNote && (
+        <div style={{ fontSize: 11, color: '#9aa0ac', marginBottom: 8 }}>{cmpNote}</div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
-        <StatCard label="Chi phí ads" value={fmt(totSpend)} sub={`${camps.length} campaign đang chạy`} />
-        <StatCard label="Hiển thị" value={fmtInt(totImpr)} sub="impressions" />
-        <StatCard label="CTR trung bình" value={fmtPct(totImpr ? totClicks / totImpr : 0, 2)} sub={`${fmtInt(totClicks)} lượt click`} />
-        <StatCard label="CVR trung bình" value={fmtPct(avgCvr, 2)} sub={`${fmtInt(totConv)} chuyển đổi`} />
-        <StatCard label="CPC trung bình" value={fmt(totClicks ? totSpend / totClicks : 0)} sub="chi phí / click" />
+        <StatCard label="Chi phí ads" value={fmt(totSpend)} sub={`${camps.length} campaign đang chạy`} delta={cmp ? chip(totSpend, cmp.spend, true) : undefined} />
+        <StatCard label="Hiển thị" value={fmtInt(totImpr)} sub="impressions" delta={cmp ? chip(totImpr, cmp.impressions) : undefined} />
+        <StatCard label="CTR trung bình" value={fmtPct(totImpr ? totClicks / totImpr : 0, 2)} sub={`${fmtInt(totClicks)} lượt click`} delta={cmp ? chip(totImpr ? totClicks / totImpr : 0, pCtr) : undefined} />
+        <StatCard label="CVR trung bình" value={fmtPct(avgCvr, 2)} sub={`${fmtInt(totConv)} chuyển đổi`} delta={cmp ? chip(avgCvr, pCvr) : undefined} />
+        <StatCard label="CPC trung bình" value={fmt(totClicks ? totSpend / totClicks : 0)} sub="chi phí / click" delta={cmp ? chip(totClicks ? totSpend / totClicks : 0, pCpc, true) : undefined} />
         <StatCard
           label="ROAS gộp"
           value={fmtX(blendRoas)}
           sub="GMV từ ads / chi phí"
           valColor={blendRoas >= 4 ? '#0f9d6b' : blendRoas >= 2.5 ? '#e8890c' : '#e5484d'}
+          delta={cmp ? chip(blendRoas, pRoas) : undefined}
         />
       </div>
 

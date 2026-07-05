@@ -170,12 +170,37 @@ export function OrdersM7({ s }: { s: DashboardState }) {
                 onClick={() => setExpandedId(expanded ? null : r.id)}
                 style={{ ...grid, ...bodyRow, cursor: 'pointer', background: expanded ? '#f7f8fa' : '#fff' }}
               >
-                <div style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>#{r.id}</div>
+                <div
+                  title={'#' + r.id}
+                  style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                >
+                  {shortId(r.id)}
+                </div>
                 <div>
                   <PlatformBadge platform={r.platform} small />
                 </div>
                 <div style={{ color: '#6b7180', fontSize: 11.5 }}>{fmtDayMonth(r.date)}</div>
-                <div style={{ fontSize: 12 }}>{r.product}</div>
+                <div
+                  title={(r.items ?? [{ name: r.product, qty: r.qty }]).map((it) => `${it.name} ×${it.qty}`).join('\n')}
+                  style={{ fontSize: 12, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 }}
+                >
+                  <span style={{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.product}</span>
+                  {r.items && r.items.length > 1 && (
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color: '#3d47d9',
+                        background: '#eceefc',
+                        borderRadius: 6,
+                        padding: '2px 6px',
+                      }}
+                    >
+                      +{r.items.length - 1}
+                    </span>
+                  )}
+                </div>
                 <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.qty}</div>
                 <div style={{ textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtInt(r.gmv)}</div>
                 <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: '#b3261e' }}>−{fmtInt(total)}</div>
@@ -188,8 +213,13 @@ export function OrdersM7({ s }: { s: DashboardState }) {
               </div>
               {expanded && (
                 <div style={{ background: '#fafbfd', borderBottom: '1px solid #eef0f4', padding: '14px 20px 16px' }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 700, color: '#6b7180', marginBottom: 10 }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 700, color: '#6b7180', marginBottom: 3 }}>
                     Cấu trúc phí đơn #{r.id} — GMV {fmtInt(r.gmv)}đ → thực nhận {fmtInt(r.net)}đ
+                  </div>
+                  <div style={{ fontSize: 11, color: '#9aa0ac', marginBottom: 10 }}>
+                    {(r.items ?? [{ name: r.product, qty: r.qty }])
+                      .map((it) => `${it.name} ×${it.qty}`)
+                      .join('  ·  ')}
                   </div>
                   <div className="nl-feegrid" style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10 }}>
                     {FEE_KEYS.map((k) => (
@@ -230,6 +260,10 @@ export function OrdersM7({ s }: { s: DashboardState }) {
     </div>
   )
 }
+
+/** Mã TikTok dài 18-19 số tràn cột 105px → hiện phần đuôi (phần phân biệt đơn);
+ *  mã đầy đủ vẫn có ở tooltip + hàng bung. */
+const shortId = (id: string): string => (id.length > 11 ? '#…' + id.slice(-9) : '#' + id)
 
 const pageBtn = (disabled: boolean): React.CSSProperties => ({
   border: '1px solid #d9dce4',

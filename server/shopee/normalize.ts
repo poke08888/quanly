@@ -333,6 +333,13 @@ export function normalizeReconOrders(
       const sku = li ? itemSku(li) : ''
       const cat = catalog.get(sku)
       const qty = (o.item_list ?? []).reduce((s, x) => s + (num(x.model_quantity_purchased) || 1), 0) || 1
+      // Đơn nhiều sản phẩm: gộp đủ item_list theo tên (trước đây chỉ lấy item đầu).
+      const itemAgg = new Map<string, number>()
+      for (const x of o.item_list ?? []) {
+        const name = x.item_name ?? itemSku(x)
+        itemAgg.set(name, (itemAgg.get(name) ?? 0) + (num(x.model_quantity_purchased) || 1))
+      }
+      const items = [...itemAgg.entries()].map(([name, n]) => ({ name, qty: n }))
       const escrowAmt = income ? num(income.escrow_amount) : 0
       const net = escrowAmt || gmv - FEE_KEYS.reduce((s, k) => s + fees[k], 0)
       return {
@@ -347,6 +354,7 @@ export function normalizeReconOrders(
         fees,
         net,
         isSettled: shopeeSettled(o.order_status) && escrowAmt > 0,
+        ...(items.length > 1 ? { items } : {}),
       }
     })
     .sort((a, b) => (a.date < b.date ? 1 : -1))

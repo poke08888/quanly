@@ -57,11 +57,13 @@ export function StatCard({
   value,
   sub,
   valColor,
+  delta,
 }: {
   label: string
   value: string | number
   sub?: string
   valColor?: string
+  delta?: DeltaChip
 }) {
   return (
     <div
@@ -84,7 +86,14 @@ export function StatCard({
       >
         {value}
       </div>
-      {sub != null && <div style={{ fontSize: 10.5, color: '#9aa0ac', marginTop: 4 }}>{sub}</div>}
+      {(sub != null || delta?.show) && (
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 4 }}>
+          {delta?.show && (
+            <span style={{ fontSize: 11.5, fontWeight: 700, color: delta.deltaColor }}>{delta.delta}</span>
+          )}
+          {sub != null && <span style={{ fontSize: 10.5, color: '#9aa0ac' }}>{sub}</span>}
+        </div>
+      )}
     </div>
   )
 }

@@ -27,7 +27,7 @@ import {
 } from '../data/brandShopStore'
 import { fetchMe, login as loginApi, logout as logoutApi, type AuthUser } from '../data/authApi'
 import { ApiAuthError } from '../data/apiBase'
-import { fetchOverview, fetchAds, fetchKoc, fetchRecon, fetchKpiActuals, type Win, type HourPoint } from '../data/viewApi'
+import { fetchOverview, fetchAds, fetchKoc, fetchRecon, fetchKpiActuals, type Win, type HourPoint, type AdsCompare } from '../data/viewApi'
 import { periodSpan, type KpiPeriod } from '../lib/kpiProgress'
 import { buildPeriods, isoOffset, offsetOfIso, todayStart } from '../lib/period'
 import { emptyAggregate } from '../domain/metrics'
@@ -49,6 +49,10 @@ import { fmtFull, fmtVND } from '../lib/format'
 export interface DashboardData {
   cur: Aggregate
   prev: Aggregate
+  /** true = prev là hôm qua CẮT đúng giờ-phút hiện tại (kỳ Hôm nay). */
+  prevAligned?: boolean
+  /** Kỳ trước của trang Ads (Hôm nay → hôm qua cùng giờ-phút). */
+  adsCompare?: AdsCompare | null
   tkAgg: Aggregate
   spAgg: Aggregate
   series: DailyRow[]
@@ -206,8 +210,8 @@ export function useDashboard() {
           return { ...base, ...ov, kpiMonthly }
         }
         case 'm3': {
-          const { campaigns } = await fetchAds(platform, brand, curW)
-          return { ...base, campaigns }
+          const { campaigns, adsCompare } = await fetchAds(platform, brand, curW)
+          return { ...base, campaigns, adsCompare }
         }
         case 'm4': {
           const { creators, cur } = await fetchKoc(platform, brand, curW)

@@ -32,7 +32,7 @@ import {
   updateShop,
   deleteShop,
 } from './store'
-import { aggregate, campaigns, creators, gmvOnly, hourlySeries, ordersPage, recon, series, topProducts } from './views'
+import { adsCompare, aggregate, aggregateAtTime, campaigns, creators, gmvOnly, hourlySeries, ordersPage, recon, series, topProducts } from './views'
 import { mergeAggregates } from '../src/domain/metrics'
 import type { PlatformFilter } from '../src/data/types'
 
@@ -100,9 +100,25 @@ app.post('/api/view/overview', (req, res) => {
   const curAgg =
     platform === 'all' ? mergeAggregates([tkAgg, spAgg]) : platform === 'tiktok' ? tkAgg : spAgg
 
+  // "So với kỳ trước" của HÔM NAY phải là hôm qua CẮT ĐÚNG giờ-phút hiện tại —
+  // so với cả ngày hôm qua thì sáng nào cũng âm 50-60% ảo. Dựng từ snapshot giờ;
+  // ngày chưa có snapshot (dữ liệu cũ) → giữ so sánh cả-ngày và báo cờ = false.
+  const vn = new Date(Date.now() + 7 * 3_600_000)
+  const todayVN = vn.toISOString().slice(0, 10)
+  let prevAgg = aggregate(platform, brand, prev.start, prev.end)
+  let prevAligned = false
+  if (cur.start === cur.end && cur.end === todayVN && prev.start === prev.end) {
+    const aligned = aggregateAtTime(platform, brand, prev.start, vn.getUTCHours(), vn.getUTCMinutes())
+    if (aligned) {
+      prevAgg = aligned
+      prevAligned = true
+    }
+  }
+
   res.json({
     cur: curAgg,
-    prev: aggregate(platform, brand, prev.start, prev.end),
+    prev: prevAgg,
+    prevAligned,
     tkAgg,
     spAgg,
     series: series(platform, brand, seriesW.start, seriesW.end),
@@ -125,7 +141,11 @@ app.get('/api/view/ads', (req, res) => {
   const brand = String(req.query.brand ?? 'group')
   const start = String(req.query.start ?? '')
   const end = String(req.query.end ?? '')
-  res.json({ campaigns: campaigns(platform, brand, start, end) })
+  res.json({
+    campaigns: campaigns(platform, brand, start, end),
+    // Kỳ trước liền kề (HÔM NAY → hôm qua cắt đúng giờ-phút hiện tại).
+    adsCompare: adsCompare(platform, brand, start, end),
+  })
 })
 
 app.get('/api/view/koc', (req, res) => {

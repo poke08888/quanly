@@ -165,4 +165,6 @@ export interface ReconOrder {
   fees: Fees
   net: number
   isSettled: boolean
+  /** Đơn nhiều sản phẩm: danh sách đầy đủ (chỉ có khi >1 sản phẩm — cache cũ không có). */
+  items?: Array<{ name: string; qty: number }>
 }

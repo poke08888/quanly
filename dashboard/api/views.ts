@@ -114,6 +114,76 @@ export function aggregate(filter: PlatformFilter, brand: string, start: string, 
   return withKpis(acc)
 }
 
+/** Nội suy tuyến tính mọi field số (đệ quy vào fees/sources) giữa 2 bản cumulative. */
+function lerpDeep<T>(a: T | null | undefined, b: T | null | undefined, frac: number): T | null {
+  if (a == null && b == null) return null
+  const base = (b ?? a) as Record<string, unknown>
+  const av = (a ?? {}) as Record<string, unknown>
+  const bv = (b ?? a) as Record<string, unknown>
+  const out: Record<string, unknown> = { ...base }
+  for (const k of Object.keys(base)) {
+    const y = bv[k]
+    if (typeof y === 'number') {
+      const x = typeof av[k] === 'number' ? (av[k] as number) : 0
+      out[k] = x + (y - x) * frac
+    } else if (y && typeof y === 'object' && !Array.isArray(y)) {
+      out[k] = lerpDeep(av[k] ?? null, y, frac)
+    }
+  }
+  return out as T
+}
+
+/** Giá trị cumulative tại hour:minute từ snapshot giờ: snap[h-1] (hết giờ trước)
+ *  + phần trong giờ × phút/60. Snapshot khuyết giờ nào thì carry giờ gần nhất. */
+function lerpSnapshotsAt<T>(snaps: Array<{ hour: number; data: T }>, hour: number, minute: number): T | null {
+  if (snaps.length === 0) return null
+  const byHour = new Map(snaps.map((s) => [s.hour, s.data]))
+  const upTo = (h: number): T | null => {
+    for (let k = Math.min(h, 23); k >= 0; k--) {
+      const v = byHour.get(k)
+      if (v) return v
+    }
+    return null
+  }
+  return lerpDeep(upTo(hour - 1), upTo(hour), Math.min(1, Math.max(0, minute / 60)))
+}
+
+/**
+ * "Cùng giờ hôm qua": Aggregate của `date` tính ĐẾN hour:minute, dựng từ snapshot
+ * theo giờ (hourly_data). null khi ngày đó chưa có snapshot — caller giữ so sánh
+ * cả-ngày cũ. cogs/KOC booking không có trong snapshot → quy theo % thời gian đã trôi.
+ */
+export function aggregateAtTime(
+  filter: PlatformFilter,
+  brand: string,
+  date: string,
+  hour: number,
+  minute: number,
+): Aggregate | null {
+  const rows: DailyRow[] = []
+  let found = false
+  for (const p of platformsFor(filter)) {
+    for (const shop of resolveShops(p, brand)) {
+      const snaps = loadHourly<DailyRow>(shop.id, p, date)
+      const row = lerpSnapshotsAt(snaps, hour, minute)
+      if (row) {
+        found = true
+        rows.push(row)
+      }
+    }
+  }
+  if (!found) return null
+  const acc = aggregateFromRows(rows)
+  const dayFrac = (hour * 60 + minute) / 1440
+  const tops = topProducts(filter, brand, date, date)
+  const cm = cogsMap()
+  acc.cogs = tops.reduce((s, t) => s + t.qty * (cm.get(t.sku) ?? 0), 0) * dayFrac
+  acc.kocBooking = bookingFee(filter, brand, date, date) * dayFrac
+  acc.orders = Math.round(acc.orders)
+  acc.profit = acc.netRevenue - acc.cogs - acc.ads - acc.fees.affiliate_comm - acc.kocBooking
+  return withKpis(acc)
+}
+
 // ---- campaigns / creators / recon ----
 
 /** Per-day campaign row persisted by the poller (type='campaigns_daily', ISO dates). */
@@ -165,6 +235,92 @@ function aggregateCampaignDays(rows: CampaignDailyRow[], start: string, end: str
       cpm: a.impressions ? (a.spend / a.impressions) * 1000 : 0,
       conversions: a.conversions,
     }))
+}
+
+/** Tổng ads kỳ trước cho trang Ads. Khi kỳ = HÔM NAY: cắt hôm qua theo đúng
+ *  giờ-phút hiện tại — spend/phễu từ snapshot '{platform}-ads' nếu đã có (thật),
+ *  chưa có thì phễu = cả ngày × tỷ trọng giờ tích lũy (est) và spend thật lấy từ
+ *  hourly_data (DailyRow.ads). Kỳ nhiều ngày: kỳ trước liền kề trọn vẹn. */
+export interface AdsCompare {
+  spend: number
+  impressions: number
+  clicks: number
+  conversions: number
+  gmv: number
+  /** true = đã cắt theo cùng giờ-phút hôm qua. */
+  aligned: boolean
+  /** true = phần phễu là ước tính phân bổ (chưa đủ snapshot ads hôm trước). */
+  est: boolean
+}
+
+const shiftIso = (iso: string, d: number): string =>
+  new Date(Date.parse(iso + 'T00:00:00Z') + d * 86_400_000).toISOString().slice(0, 10)
+
+export function adsCompare(filter: PlatformFilter, brand: string, start: string, end: string): AdsCompare | null {
+  const days = Math.max(1, Math.round((Date.parse(end) - Date.parse(start)) / 86_400_000) + 1)
+  const prevStart = shiftIso(start, -days)
+  const prevEnd = shiftIso(start, -1)
+  const base = { spend: 0, impressions: 0, clicks: 0, conversions: 0, gmv: 0 }
+  for (const c of campaigns(filter, brand, prevStart, prevEnd)) {
+    base.spend += c.spend
+    base.impressions += c.impressions
+    base.clicks += c.clicks
+    base.conversions += c.conversions
+    base.gmv += c.gmv
+  }
+
+  const vn = new Date(Date.now() + 7 * 3_600_000)
+  const today = vn.toISOString().slice(0, 10)
+  if (!(start === end && end === today)) {
+    return base.spend || base.impressions ? { ...base, aligned: false, est: false } : null
+  }
+  const h = vn.getUTCHours()
+  const m = vn.getUTCMinutes()
+
+  // 1) Snapshot ads thật của hôm qua (poller ghi mỗi chu kỳ từ 05/07) → cắt chính xác.
+  const real = { spend: 0, impressions: 0, clicks: 0, conversions: 0, gmv: 0 }
+  let haveReal = false
+  for (const p of platformsFor(filter)) {
+    for (const shop of resolveShops(p, brand)) {
+      const at = lerpSnapshotsAt(loadHourly<typeof real>(shop.id, `${p}-ads`, prevEnd), h, m)
+      if (at) {
+        haveReal = true
+        real.spend += at.spend
+        real.impressions += at.impressions
+        real.clicks += at.clicks
+        real.conversions += at.conversions
+        real.gmv += at.gmv
+      }
+    }
+  }
+  if (haveReal) return { ...real, aligned: true, est: false }
+
+  // 2) Chưa có snapshot ads: phễu = cả ngày × tỷ trọng giờ; spend thật từ DailyRow.ads.
+  const wSum = HOUR_WEIGHTS.reduce((a, b) => a + b, 0)
+  const upToH = HOUR_WEIGHTS.slice(0, h).reduce((a, b) => a + b, 0) + HOUR_WEIGHTS[h] * (m / 60)
+  const frac = upToH / wSum
+  const scaled: AdsCompare = {
+    spend: base.spend * frac,
+    impressions: base.impressions * frac,
+    clicks: base.clicks * frac,
+    conversions: base.conversions * frac,
+    gmv: base.gmv * frac,
+    aligned: true,
+    est: true,
+  }
+  let realSpend = 0
+  let haveSpend = false
+  for (const p of platformsFor(filter)) {
+    for (const shop of resolveShops(p, brand)) {
+      const at = lerpSnapshotsAt(loadHourly<DailyRow>(shop.id, p, prevEnd), h, m)
+      if (at) {
+        haveSpend = true
+        realSpend += at.ads
+      }
+    }
+  }
+  if (haveSpend) scaled.spend = realSpend
+  return scaled.spend || scaled.impressions ? scaled : null
 }
 
 export function campaigns(filter: PlatformFilter, brand: string, start: string, end: string): Campaign[] {
@@ -434,7 +590,15 @@ export function ordersPage(filter: PlatformFilter, brand: string, opts: OrdersPa
   const query = opts.q.trim().toLowerCase()
   const filtered = reconList(filter, brand).filter((r) => {
     if (opts.status !== 'all' && (opts.status === 'settled') !== r.isSettled) return false
-    if (query && !(`#${r.id}`.toLowerCase().includes(query) || r.product.toLowerCase().includes(query))) return false
+    if (
+      query &&
+      !(
+        `#${r.id}`.toLowerCase().includes(query) ||
+        r.product.toLowerCase().includes(query) ||
+        r.items?.some((it) => it.name.toLowerCase().includes(query))
+      )
+    )
+      return false
     return true
   })
 

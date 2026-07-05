@@ -37,6 +37,8 @@ export function OverviewM1({ s }: { s: DashboardState }) {
   if (!d) return null
   const { cur, prev } = d
   const fmt = s.fmt
+  // Kỳ Hôm nay: server đã cắt hôm qua theo đúng giờ-phút hiện tại → đổi nhãn cho rõ.
+  const subCmp = d.prevAligned ? 'so cùng giờ hôm qua' : undefined
 
   const marginColor = cur.marginPct >= 0.08 ? '#0f9d6b' : cur.marginPct >= 0.03 ? '#e8890c' : '#e5484d'
   const roasColor = cur.roas >= 4 ? '#0f9d6b' : cur.roas >= 2.5 ? '#e8890c' : '#e5484d'
@@ -118,19 +120,20 @@ export function OverviewM1({ s }: { s: DashboardState }) {
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(168px, 1fr))', gap: 12 }}>
-        <KpiCard label="GMV" value={fmt(cur.gmv)} accent="#3d47d9" delta={deltaChip(cur.gmv, prev.gmv, s.compare)} />
-        <KpiCard label="Doanh thu NET" value={fmt(cur.netRevenue)} accent="#3d47d9" delta={deltaChip(cur.netRevenue, prev.netRevenue, s.compare)} />
+        <KpiCard label="GMV" value={fmt(cur.gmv)} accent="#3d47d9" sub={subCmp} delta={deltaChip(cur.gmv, prev.gmv, s.compare)} />
+        <KpiCard label="Doanh thu NET" value={fmt(cur.netRevenue)} accent="#3d47d9" sub={subCmp} delta={deltaChip(cur.netRevenue, prev.netRevenue, s.compare)} />
         <KpiCard
           label="Lợi nhuận"
           value={fmt(cur.profit)}
           accent={marginColor}
           valColor={cur.profit < 0 ? '#e5484d' : '#191c22'}
+          sub={subCmp}
           delta={deltaChip(cur.profit, prev.profit, s.compare)}
         />
-        <KpiCard label="Biên LN %" value={fmtPct(cur.marginPct)} accent={marginColor} valColor={marginColor} delta={deltaChip(cur.marginPct, prev.marginPct, s.compare)} />
-        <KpiCard label="ROAS" value={fmtX(cur.roas)} accent={roasColor} valColor={roasColor} delta={deltaChip(cur.roas, prev.roas, s.compare)} />
+        <KpiCard label="Biên LN %" value={fmtPct(cur.marginPct)} accent={marginColor} valColor={marginColor} sub={subCmp} delta={deltaChip(cur.marginPct, prev.marginPct, s.compare)} />
+        <KpiCard label="ROAS" value={fmtX(cur.roas)} accent={roasColor} valColor={roasColor} sub={subCmp} delta={deltaChip(cur.roas, prev.roas, s.compare)} />
         <KpiCard label="CIR %" value={fmtPct(cur.cir)} accent={cirColor} valColor={cirColor} sub="Ads + KOC / GMV" delta={deltaChip(cur.cir, prev.cir, s.compare, true)} />
-        <KpiCard label="Đơn hàng" value={fmtInt(cur.orders)} accent="#3d47d9" delta={deltaChip(cur.orders, prev.orders, s.compare)} />
+        <KpiCard label="Đơn hàng" value={fmtInt(cur.orders)} accent="#3d47d9" sub={subCmp} delta={deltaChip(cur.orders, prev.orders, s.compare)} />
       </div>
 
       <div className="nl-grid-2" style={{ display: 'grid', gridTemplateColumns: '1.55fr 1fr', gap: 14, marginTop: 14 }}>
