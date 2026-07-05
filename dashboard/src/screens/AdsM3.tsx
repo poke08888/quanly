@@ -51,6 +51,8 @@ export function AdsM3({ s }: { s: DashboardState }) {
   const pCvr = cmp && cmp.clicks ? cmp.conversions / cmp.clicks : 0
   const pCpc = cmp && cmp.clicks ? cmp.spend / cmp.clicks : 0
   const pRoas = cmp && cmp.spend ? cmp.gmv / cmp.spend : 0
+  const aov = totConv ? totAdsGmv / totConv : 0
+  const pAov = cmp && cmp.conversions ? cmp.gmv / cmp.conversions : 0
   const cmpNote = cmp
     ? cmp.aligned
       ? cmp.est
@@ -106,6 +108,8 @@ export function AdsM3({ s }: { s: DashboardState }) {
           valColor={blendRoas >= 4 ? '#0f9d6b' : blendRoas >= 2.5 ? '#e8890c' : '#e5484d'}
           delta={cmp ? chip(blendRoas, pRoas) : undefined}
         />
+        <StatCard label="Đơn từ ads" value={fmtInt(totConv)} sub="chuyển đổi ra đơn" delta={cmp ? chip(totConv, cmp.conversions) : undefined} />
+        <StatCard label="AOV ads" value={fmt(aov)} sub="GMV ads / đơn ads" delta={cmp ? chip(aov, pAov) : undefined} />
       </div>
 
       <div className="nl-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14, alignItems: 'start' }}>
