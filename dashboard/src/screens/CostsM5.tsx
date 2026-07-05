@@ -25,8 +25,10 @@ function CogsRow({
   // Keep the input in sync when the persisted value changes (after a save re-fetch).
   useEffect(() => setVal(String(cost)), [cost])
   const num = Number(val) || 0
-  const m = (price * 0.81 - num) / price
-  const mColor = m >= 0.25 ? '#0f9d6b' : m >= 0.15 ? '#e8890c' : '#e5484d'
+  // Biên GỘP thuần sản xuất: (giá bán − giá vốn) / giá bán — không trừ phí sàn
+  // (phí sàn có dòng riêng trong Cấu trúc GMV, tránh cảm giác COGS "dính" phí).
+  const m = price > 0 ? (price - num) / price : 0
+  const mColor = m >= 0.5 ? '#0f9d6b' : m >= 0.35 ? '#e8890c' : '#e5484d'
   const commit = () => {
     if (canEdit && num !== cost) onSave(num)
   }
@@ -103,7 +105,7 @@ export function CostsM5({ s }: { s: DashboardState }) {
           <div style={{ padding: '16px 20px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
             <div>
               <div style={{ fontSize: 13.5, fontWeight: 700 }}>COGS theo SKU</div>
-              <div style={{ fontSize: 11, color: '#9aa0ac', marginTop: 2 }}>Giá vốn đơn vị — SKU thật từ kho đơn 2 sàn, nhập giá vốn để tính biên LN</div>
+              <div style={{ fontSize: 11, color: '#9aa0ac', marginTop: 2 }}>Giá vốn đơn vị — SKU thật từ kho đơn 2 sàn, nhập giá vốn để tính biên gộp (chưa trừ phí sàn)</div>
             </div>
             <button
               onClick={async () => {
@@ -121,7 +123,7 @@ export function CostsM5({ s }: { s: DashboardState }) {
             <div>Sản phẩm</div>
             <div style={{ textAlign: 'right' }}>Giá vốn (đ)</div>
             <div style={{ textAlign: 'right' }}>Giá bán</div>
-            <div style={{ textAlign: 'right' }}>Biên LN%</div>
+            <div style={{ textAlign: 'right' }}>Biên gộp%</div>
           </div>
           {products.map((p) => (
             <CogsRow
